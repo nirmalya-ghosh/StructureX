@@ -1861,7 +1861,7 @@ function renderSatelliteCharts() {
     const latestTraffic = trafficFlow[trafficFlow.length - 1];
     $("#sat-health-status").textContent = latestHealth >= 94 ? "ACTIVE" : latestHealth >= 88 ? "WATCH" : "DEGRADED";
     $("#sat-network-status").textContent = `${latestNetwork.toFixed(1)}%`;
-    $("#sat-traffic-status").textContent = `${latestTraffic >= 90 ? "HIGH" : latestTraffic >= 62 ? "ELEVATED" : "STABLE"} (${Math.round(latestTraffic * 142)} /hr)`;
+    $("#sat-traffic-status").textContent = `${latestTraffic >= 90 ? "OVERLOADED" : latestTraffic >= 62 ? "BUSY" : "NORMAL"} (${Math.round(latestTraffic * 142)} /hr)`;
 }
 
 function renderSystemStatusChart(labels, satelliteHealth, networkHealth) {
@@ -2055,7 +2055,7 @@ function renderTrafficFlowChart(labels, trafficFlow) {
         {
             paper_bgcolor: "rgba(0,0,0,0)",
             plot_bgcolor: "rgba(0,0,0,0)",
-            margin: { t: 8, r: 10, b: 24, l: 28 },
+            margin: { t: 8, r: 10, b: 24, l: 70 },
             font: {
                 family: "'Inter', sans-serif",
                 color: THEME.text,
