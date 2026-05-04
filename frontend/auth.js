@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const authTabs = document.querySelector('.auth-tabs');
     const loginForm = document.getElementById('login-form');
     const signupForm = document.getElementById('signup-form');
+    const termsCheckbox = signupForm.querySelector('.terms input');
 
     // Tab Switching Logic
     tabLogin.addEventListener('click', () => {
@@ -68,6 +69,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const googleBtns = [document.getElementById('google-login'), document.getElementById('google-signup')];
     googleBtns.forEach(btn => {
         btn.addEventListener('click', () => {
+            if (btn.id === 'google-signup' && !termsCheckbox.checked) {
+                window.alert('Please agree to the Terms & Conditions and Privacy Policy before creating an account.');
+                return;
+            }
+
             console.log('Redirecting to Google Auth...');
             btn.innerHTML = '<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google"><span>Connecting...</span>';
             

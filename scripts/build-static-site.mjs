@@ -10,14 +10,12 @@ const staticOutput = join(output, "static");
 await rm(output, { recursive: true, force: true });
 await mkdir(staticOutput, { recursive: true });
 
-await cp(join(source, "index.html"), join(output, "index.html"));
-await cp(join(source, "auth.html"), join(output, "auth.html"));
-
 const files = await readdir(source, { withFileTypes: true });
 for (const file of files) {
-  if (!file.isFile() || file.name.endsWith(".html")) {
+  if (!file.isFile()) {
     continue;
   }
 
-  await cp(join(source, file.name), join(staticOutput, file.name));
+  const destination = file.name.endsWith(".html") ? output : staticOutput;
+  await cp(join(source, file.name), join(destination, file.name));
 }

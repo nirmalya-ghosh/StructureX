@@ -34,6 +34,7 @@ It is designed as a full-stack portfolio project with:
 - [API Reference](#api-reference)
 - [Data and Model Artifacts](#data-and-model-artifacts)
 - [Frontend Experience](#frontend-experience)
+- [Legal, Privacy, and Security](#legal-privacy-and-security)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 - [License](#license)
@@ -440,6 +441,17 @@ Main frontend capabilities include:
 - review AI-generated summaries
 - inspect explainability output
 - explore map-driven building analysis
+
+## Legal, Privacy, and Security
+
+Before using or deploying StructureX, review the project legal and safety documents:
+
+- [Terms & Conditions](TERMS.md)
+- [Privacy Policy](PRIVACY.md)
+- [Security Policy](SECURITY.md)
+- [MIT License](LICENSE)
+
+StructureX outputs are analytical estimates only. They are not emergency instructions, engineering certifications, code-compliance determinations, or substitutes for qualified professional review.
 
 ## Troubleshooting
 
