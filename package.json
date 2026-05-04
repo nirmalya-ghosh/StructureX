@@ -4,10 +4,5 @@
   "private": true,
   "scripts": {
     "build": "node scripts/build-static-site.mjs"
-  },
-  "dependencies": {
-    "next": "16.2.4",
-    "react": "19.2.5",
-    "react-dom": "19.2.5"
   }
 }
