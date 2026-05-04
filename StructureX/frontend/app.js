@@ -1909,8 +1909,9 @@ function selectPlaceResult(feature, options = {}) {
     });
 
     if (state.mapReady && state.map) {
-        const zoom = isPOI ? 18.2 : 15.8;
-        if (Array.isArray(feature.bbox) && feature.bbox.length === 4) {
+        const zoom = Number(options.forceZoom || (isPOI ? 18.2 : 15.8));
+        const useBounds = !options.skipBounds && Array.isArray(feature.bbox) && feature.bbox.length === 4;
+        if (useBounds) {
             state.map.fitBounds(
                 [
                     [feature.bbox[0], feature.bbox[1]],
@@ -5471,6 +5472,9 @@ function initVoiceAssistant() {
         if (!parsed) {
             return;
         }
+        if (isSpeakingSequence && parsed.intent !== "stop_speaking" && parsed.intent !== "stop_listening") {
+            return;
+        }
         if (normalized === lastVoiceCommand && now - lastVoiceCommandAt < 1800) {
             return;
         }
@@ -5493,12 +5497,13 @@ function initVoiceAssistant() {
             if (index >= 0) {
                 command = normalized.slice(index + phrase.length).trim();
                 hasWake = true;
-                commandHotUntil = Date.now() + 9000;
+                commandHotUntil = Date.now() + 30000;
                 break;
             }
         }
 
-        if (!hasWake && Date.now() > commandHotUntil && !looksLikeDirectVoiceCommand(command)) {
+        const isInterrupt = isVoiceInterruptCommand(command);
+        if (!hasWake && !isInterrupt && Date.now() > commandHotUntil && !looksLikeDirectVoiceCommand(command)) {
             return null;
         }
 
@@ -5507,10 +5512,10 @@ function initVoiceAssistant() {
             return { intent: "ready" };
         }
 
-        if (/\b(stop listening|sleep|go offline|turn off microphone)\b/.test(command)) {
+        if (/\b(stop listening|sleep|go offline|turn off microphone|mic off|microphone off)\b/.test(command)) {
             return { intent: "stop_listening" };
         }
-        if (/\b(stop talking|quiet|cancel speech|stop speaking)\b/.test(command)) {
+        if (isVoiceInterruptCommand(command)) {
             return { intent: "stop_speaking" };
         }
         if (/\b(my location|current location|live location|open location|where am i)\b/.test(command)) {
@@ -5548,7 +5553,11 @@ function initVoiceAssistant() {
     }
 
     function looksLikeDirectVoiceCommand(command) {
-        return /\b(search|find|show|open|go to|navigate|locate|select|analyze|analyse|scan|inspect|review|summarize|summarise|tell me|where is|what is)\b/.test(command);
+        return /\b(search|find|show|open|go to|navigate|locate|select|analyze|analyse|scan|inspect|review|summarize|summarise|tell me|where is|what is|stop|cut|quiet|cancel)\b/.test(command);
+    }
+
+    function isVoiceInterruptCommand(command) {
+        return /\b(stop|stop talking|quiet|cancel|cancel speech|stop speaking|cut|cut it|shut up|enough)\b/.test(command);
     }
 
     function extractVoicePlaceQuery(command) {
@@ -5556,7 +5565,8 @@ function initVoiceAssistant() {
             .replace(/\b(search for|search|find|show me|show|open|go to|navigate to|take me to|locate|look up)\b/g, " ")
             .replace(/\b(select|choose|analyze|analyse|scan|inspect|review)\b/g, " ")
             .replace(/\b(tell me about|tell me|what is|where is)\b/g, " ")
-            .replace(/\b(please|just|near me|nearby|now)\b/g, " ")
+            .replace(/\b(please|just|near me|nearby|nearest|closest|now)\b/g, " ")
+            .replace(/\b(building|structure|area|city|town|village|place|in|at|near|around)\b/g, " ")
             .replace(/\b(this building|this area|this place|current area|current place)\b/g, " ")
             .replace(/\s+/g, " ")
             .trim();
@@ -5566,7 +5576,7 @@ function initVoiceAssistant() {
     }
 
     async function executeVoiceCommand(command) {
-        commandHotUntil = Date.now() + 9000;
+        commandHotUntil = Date.now() + 30000;
         if (command.intent === "ready") {
             setVoiceCommandStatus("Ready", "Waiting for command");
             speakText("Ready.");
@@ -5621,11 +5631,15 @@ function initVoiceAssistant() {
         }
         setSystemStatus(`Voice search: ${query}`);
         closeNavVoiceMenu();
-        speakText(analyze ? `Searching ${query} and selecting a building.` : `Searching ${query}.`);
+        speakText(analyze ? `Scanning near ${query}.` : `Searching ${query}.`);
 
         const selected = await runPlaceSearch(query, {
             autoSelectFirst: true,
-            selectOptions: { skipAutoAnalysis: analyze },
+            selectOptions: {
+                skipAutoAnalysis: analyze,
+                skipBounds: true,
+                forceZoom: analyze ? 17.8 : 16.8,
+            },
         });
         if (!selected?.center) {
             speakText(`I could not find ${query}.`);
@@ -5634,7 +5648,7 @@ function initVoiceAssistant() {
 
         const label = selected.text || selected.place_name || query;
         if (!analyze) {
-            speakText(`Mapped ${label}.`);
+            speakText(`Mapped ${label}. The 3D building layer is kept active, so you can say scan this area or tap a building.`);
             return;
         }
 
@@ -5643,7 +5657,7 @@ function initVoiceAssistant() {
             label
         );
         if (!didSelect) {
-            speakText(`I mapped ${label}, but I could not isolate a nearby 3D building. Tap a building on the map to scan it.`);
+            speakText(`I mapped ${label}, but I could not isolate a nearby 3D building yet. Try a more exact building, road, or landmark name.`);
         }
     }
 
@@ -5663,7 +5677,10 @@ function initVoiceAssistant() {
         if (!state.mapReady || !state.map?.getLayer("3d-buildings")) {
             return false;
         }
-        await waitForMapIdle(1800);
+        if (state.map.getZoom() < 16.5) {
+            centerOnCoordinates([lngLat.lng, lngLat.lat], 17.8);
+        }
+        await waitForMapIdle(2400);
         const feature = findNearestRenderedBuilding(lngLat);
         if (!feature) {
             return false;
@@ -5673,7 +5690,7 @@ function initVoiceAssistant() {
         pendingVoiceAnalysisNarration = true;
         setSystemStatus(`Voice selected building near ${label}`);
         analyzeBuilding(feature, featureLngLat, point);
-        speakText(`I selected the nearest mapped building near ${label}. Running the structural scan now.`);
+        speakText(`Selected the nearest mapped building near ${label}. Running the structural scan.`);
         return true;
     }
 
@@ -5917,25 +5934,27 @@ function initVoiceAssistant() {
         const isBuildingOpen = bName && bName.toLowerCase() !== "building analysis" && bName.length > 3 && bReview.length > 10;
 
         if (isBuildingOpen) {
+            const score = Number.parseFloat(bRisk);
+            const riskLabel = buildVoiceRiskLabel(score);
+            const sentences = bReview
+                .split(/[.!?]/)
+                .map((item) => item.trim())
+                .filter((item) => item.length > 28 && !/ai powered|asset type|estimated floors/i.test(item));
+            const primaryFinding = sentences[0] || "The selected structure has been reviewed using mapped footprint, height, location, and regional exposure.";
+            const secondFinding = sentences[1] || "Priority checks should focus on load path continuity, facade condition, drainage, and visible distress.";
             if (mode === 'summarize') {
-                const sentences = bReview.split(/[.!]/).filter(s => s.length > 5);
-                const shortSummary = sentences.slice(0, 3).join('. ') + '.';
-                textToRead = `Building analysis for ${bName}. The computed structural risk score is ${bRisk || 'unavailable'}. Here is a brief summary of the findings: ${shortSummary} All other telemetry falls within acceptable operational thresholds.`;
+                textToRead = `Professional summary for ${bName}. Current assessment is ${riskLabel}${bRisk ? `, with a score of ${bRisk} out of 100` : ""}. ${primaryFinding}. Recommended next step: verify the visible structure, load path, roof drainage, and any signs of cracking or settlement before classifying it as inspection clear.`;
             } else {
-                textToRead = `Initiating full deep scan review for ${bName}. The current risk index is evaluated at ${bRisk || 'unknown'}. Here are the comprehensive structural findings: ${bReview}. End of structural analysis report.`;
+                textToRead = `Full StructureX review for ${bName}. Risk classification is ${riskLabel}${bRisk ? `, score ${bRisk} out of 100` : ""}. ${primaryFinding}. ${secondFinding}. Operational guidance: treat this as a screening result, confirm with field inspection, and prioritize any abnormal geometry, soft-storey behavior, water ingress, or facade distress.`;
             }
         } else {
             const searchInput = document.querySelector('input[type="text"]');
             const locName = (searchInput && searchInput.value) ? searchInput.value : "the global operational area";
             
             if (mode === 'summarize') {
-                textToRead = `Structure X Digital Twin Command Center is actively monitoring ${locName}. All satellite uplinks, ground vibration sensors, and core infrastructure telemetry streams are nominal. The AI engine is currently processing real-time environmental physics and load-path degradation models. Click on any specific building on the map to run a detailed, isolated structural evaluation, or use the CSV dataset tool on the left to run bulk evaluations.`;
+                textToRead = `StructureX is monitoring ${locName}. The map, weather context, satellite simulation, and structural review systems are online. To act quickly, say search followed by a city, road, or building name. Say scan or analyze followed by the place name to select the nearest mapped building and run a structural review.`;
             } else {
-                textToRead = `Welcome to Structure X. This is the world's most advanced AI-powered digital twin command center. Currently, we are surveying infrastructure networks across ${locName}. Our system ingests thousands of real-time data points including satellite displacement mapping, ground-level vibration sensors, historical maintenance logs, and live environmental factors. By feeding this multimodal data into our physics-informed neural networks, Structure X can predict structural failures before they occur. 
-
-                A core capability of Structure X is our bulk CSV Dataset Engine. We built this feature because manually analyzing thousands of structures across an entire city is inefficient and error-prone. By opening the 'Data & Scenarios' tab on the left, you can seamlessly upload a standard CSV file containing basic building attributes like coordinates, height, and age. The AI engine will instantly parallel-process the entire dataset, correlating your uploaded parameters against our global geographic and seismic risk models. This allows urban planners, civil engineers, and government agencies to instantly visualize city-wide vulnerabilities on the map, prioritizing maintenance and retrofit budgets exactly where they are needed most. 
-                
-                To interact with the system, simply select any glowing infrastructure node on the map to initialize a deep, targeted architectural scan, or upload your own CSV data to begin a mass portfolio analysis. All systems are currently green and fully operational. Standing by for your commands.`;
+                textToRead = `StructureX Digital Twin Command Center is active for ${locName}. It can search cities, small towns, roads, landmarks, and building names; keep the 3D map layer active; select the nearest mapped building; and generate a professional screening review. Say, Hey StructureX, scan Race Course Road, or after the first wake phrase simply say stop, search, summarize, or analyze.`;
             }
         }
         
@@ -6028,7 +6047,7 @@ function initVoiceAssistant() {
         const pitch = pitchSlider ? parseFloat(pitchSlider.value) : 1.0;
         
         // Clamp values to ensure browser compatibility
-        utterance.rate = Math.max(0.5, Math.min(2.0, rate));
+        utterance.rate = Math.max(0.5, Math.min(2.0, rate + 0.06));
         utterance.pitch = Math.max(0.5, Math.min(2.0, pitch));
         
         if (voiceSelect && availableVoices[voiceSelect.value]) {
@@ -6059,11 +6078,8 @@ function initVoiceAssistant() {
     }
 
     function speakSequence(segments) {
-        // Wake up/Clear engine to prevent the 10s delay bug in some browsers
-        suspendCommandRecognitionForSpeech();
+        // Keep recognition active so short interrupt commands like "stop" and "cut" work while speech is playing.
         synth.cancel();
-        const wakeUp = new SpeechSynthesisUtterance("");
-        synth.speak(wakeUp);
         
         utteranceQueue = segments;
         isSpeakingSequence = true;
@@ -6139,7 +6155,7 @@ function initVoiceAssistant() {
             const recommendation = Array.isArray(result?.recommendations) && result.recommendations.length
                 ? ` ${result.recommendations[0]}`
                 : "";
-            speakText(`${label} scan complete. Risk score ${Number.isFinite(score) ? score.toFixed(1) : "unavailable"} out of 100, ${buildVoiceRiskLabel(score)}.${recommendation}`);
+            speakText(`${label} scan complete. Classification: ${buildVoiceRiskLabel(score)}${Number.isFinite(score) ? `, score ${score.toFixed(1)} out of 100` : ""}.${recommendation || " Recommended action: review visible cracks, drainage, facade condition, and load path continuity before final clearance."}`);
         },
         handleBuildingAnalysisError(locationMeta) {
             if (!pendingVoiceAnalysisNarration) {
