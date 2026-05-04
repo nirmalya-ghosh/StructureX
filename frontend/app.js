@@ -912,10 +912,13 @@ function collectSelectedBuildingParts(feature, point) {
     const clickedId = getBuildingFeatureId(feature);
     const candidates = getRenderedBuildingCandidates(feature, point);
     const cluster = expandBuildingCluster(feature, candidates, point);
-    const ids = uniqueValues(cluster.map(getBuildingFeatureId).filter((id) => id !== null));
+    let ids = uniqueValues(cluster.map(getBuildingFeatureId).filter((id) => id !== null));
 
     if (!ids.length && clickedId !== null) {
         ids.push(clickedId);
+    }
+    if (ids.length > 8) {
+        ids = clickedId !== null ? [clickedId] : [];
     }
 
     return {
@@ -930,7 +933,7 @@ function getRenderedBuildingCandidates(feature, point) {
         return items;
     }
 
-    const radius = Math.max(150, Math.min(360, Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.34)));
+    const radius = Math.max(48, Math.min(84, Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.08)));
     const box = [
         [point.x - radius, point.y - radius],
         [point.x + radius, point.y + radius],
@@ -948,10 +951,7 @@ function getRenderedBuildingCandidates(feature, point) {
 function expandBuildingCluster(seedFeature, candidates, point) {
     const seedId = getBuildingFeatureId(seedFeature);
     const seedKeys = getBuildingGroupKeys(seedFeature);
-    const seedBounds = featureScreenBounds(seedFeature) || pointBounds(point);
-    const seedHeight = getFeatureHeight(seedFeature);
     const cluster = [];
-    const pending = [];
 
     candidates.forEach((candidate) => {
         if (!candidate) {
@@ -966,34 +966,10 @@ function expandBuildingCluster(seedFeature, candidates, point) {
             cluster.push(candidate);
             return;
         }
-        pending.push(candidate);
     });
 
     if (!cluster.length) {
         cluster.push(seedFeature);
-    }
-
-    let clusterBounds = mergeBounds(cluster.map((item) => featureScreenBounds(item)).filter(Boolean)) || seedBounds;
-    let changed = true;
-    while (changed) {
-        changed = false;
-        for (let index = pending.length - 1; index >= 0; index -= 1) {
-            const candidate = pending[index];
-            const candidateBounds = featureScreenBounds(candidate);
-            if (!candidateBounds) {
-                continue;
-            }
-            if (
-                heightCompatible(seedHeight, getFeatureHeight(candidate)) &&
-                boundsIntersect(expandBounds(clusterBounds, 34), candidateBounds) &&
-                boundsDistance(seedBounds, candidateBounds) <= 210
-            ) {
-                cluster.push(candidate);
-                pending.splice(index, 1);
-                clusterBounds = mergeBounds([clusterBounds, candidateBounds]);
-                changed = true;
-            }
-        }
     }
 
     return dedupeFeatures(cluster);
@@ -1002,6 +978,13 @@ function expandBuildingCluster(seedFeature, candidates, point) {
 function getBuildingFeatureId(feature) {
     const id = feature?.id;
     if (id === undefined || id === null || id === "") {
+        return null;
+    }
+    const idText = String(id);
+    if (/^\d+$/.test(idText) && Number(idText) < 1000) {
+        return null;
+    }
+    if (idText.length < 4) {
         return null;
     }
     return id;
