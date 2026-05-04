@@ -38,7 +38,7 @@ export default function DashboardPage() {
             </div>
             <div className="flex items-center gap-4">
               <span className="text-sm font-medium text-slate-600">{userEmail}</span>
-              <Button onClick={handleLogout} variant="outline" className="!w-auto !py-1.5 !px-3 text-sm">
+              <Button onClick={handleLogout} variant="outline" className="w-auto! py-1.5! px-3! text-sm">
                 Logout
               </Button>
             </div>

@@ -3,7 +3,7 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 export function Button({ children, variant = 'primary', className = '', ...props }: ButtonProps) {
-  const baseStyles = "w-full py-2.5 px-4 rounded-lg font-medium transition-all duration-300 ease-in-out transform active:scale-95 focus:outline-none focus:ring-2 focus:ring-offset-2";
+  const baseStyles = "w-full py-2.5 px-4 rounded-lg font-medium transition-all duration-300 ease-in-out transform active:scale-95 focus:outline-hidden focus:ring-2 focus:ring-offset-2";
   
   const variants = {
     primary: "bg-blue-600 hover:bg-blue-700 text-white shadow-md hover:shadow-lg focus:ring-blue-500",
