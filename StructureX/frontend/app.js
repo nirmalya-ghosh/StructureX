@@ -5,6 +5,7 @@
 const API = "/api";
 const DEFAULT_MAP_KEY = "e6jRUxTkKH6UOJQnLqvl";
 const DETAILED_STYLE_URL = `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${DEFAULT_MAP_KEY}`;
+const PLOTLY_URL = "https://cdn.plot.ly/plotly-2.29.1.min.js";
 const DEFAULT_VIEW = {
     center: [77.5946, 12.9716],
     zoom: 14.2,
@@ -296,6 +297,67 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
+let plotlyPromise = null;
+const plotlyRenderQueue = new Map();
+
+function loadPlotly() {
+    if (window.Plotly) {
+        return Promise.resolve(window.Plotly);
+    }
+    if (plotlyPromise) {
+        return plotlyPromise;
+    }
+
+    plotlyPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = PLOTLY_URL;
+        script.async = true;
+        script.onload = () => resolve(window.Plotly);
+        script.onerror = () => reject(new Error("Plotly failed to load"));
+        document.head.appendChild(script);
+    });
+
+    return plotlyPromise;
+}
+
+function withPlotly(key, callback) {
+    if (window.Plotly) {
+        return true;
+    }
+
+    plotlyRenderQueue.set(key, callback);
+    loadPlotly()
+        .then(() => {
+            const callbacks = Array.from(plotlyRenderQueue.values());
+            plotlyRenderQueue.clear();
+            callbacks.forEach((queuedCallback) => queuedCallback());
+        })
+        .catch((error) => console.warn(error.message));
+
+    return false;
+}
+
+function warmPlotly() {
+    const warm = () => {
+        loadPlotly()
+            .then(() => {
+                renderSatelliteCharts();
+                renderActiveChart();
+                if (state.weatherData) {
+                    renderWeatherPanel();
+                }
+                requestPlotResize();
+            })
+            .catch((error) => console.warn(error.message));
+    };
+
+    if ("requestIdleCallback" in window) {
+        window.requestIdleCallback(warm, { timeout: 3500 });
+    } else {
+        window.setTimeout(warm, 1600);
+    }
+}
+
 function init() {
     initMap();
     initUpload();
@@ -319,6 +381,7 @@ function init() {
     renderWeatherPanel();
     updateGauge(0, "SAFE");
     setSystemStatus("System online");
+    warmPlotly();
 }
 
 function initMap() {
@@ -1762,7 +1825,7 @@ function renderSatelliteDetail() {
 }
 
 function renderSatelliteCharts() {
-    if (!window.Plotly) {
+    if (!withPlotly("satelliteCharts", renderSatelliteCharts)) {
         return;
     }
 
@@ -2304,7 +2367,7 @@ function renderWeatherPanel() {
 }
 
 function renderWeatherChart(hourly) {
-    if (!window.Plotly) {
+    if (!withPlotly("weatherChart", () => renderWeatherChart(hourly))) {
         return;
     }
 
@@ -2382,7 +2445,7 @@ function renderWeatherChart(hourly) {
 }
 
 function renderMiniTelemetryChart(containerId, config) {
-    if (!window.Plotly) {
+    if (!withPlotly(`miniTelemetry-${containerId}`, () => renderMiniTelemetryChart(containerId, config))) {
         return;
     }
 
@@ -3523,6 +3586,11 @@ function renderActiveChart() {
     }
 
     const chartRoot = $("#chart-main");
+    if (!withPlotly("activeChart", renderActiveChart)) {
+        chartRoot.innerHTML = `<div class="chart-empty">Preparing live chart engine...</div>`;
+        return;
+    }
+
     const chartSpec = state.analysisData.charts?.[state.activeChart];
     if (chartSpec?.data) {
         renderPlotlySpec(chartRoot, chartSpec);
@@ -3588,6 +3656,10 @@ function renderActiveChart() {
 }
 
 function renderPlotlySpec(container, spec) {
+    if (!withPlotly(`plotlySpec-${container.id}`, () => renderPlotlySpec(container, spec))) {
+        return;
+    }
+
     Plotly.newPlot(
         container,
         spec.data,
@@ -3681,6 +3753,11 @@ function renderSHAP(shap) {
         .slice(0, 10)
         .reverse();
 
+    if (!withPlotly("shapChart", () => renderSHAP(shap))) {
+        chartTarget.innerHTML = `<div class="chart-empty">Preparing explainability chart...</div>`;
+        return;
+    }
+
     Plotly.newPlot(
         chartTarget,
         [
@@ -3758,7 +3835,7 @@ function initResizeHandling() {
 }
 
 function requestPlotResize() {
-    if (!window.Plotly) {
+    if (!withPlotly("plotResize", requestPlotResize)) {
         return;
     }
     [

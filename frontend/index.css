@@ -62,7 +62,7 @@
 
 /* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; overflow: hidden; }
+html, body { height: 100%; overflow: hidden; scroll-behavior: smooth; }
 body {
     font-family: var(--font-body);
     background:
@@ -71,6 +71,8 @@ body {
         linear-gradient(180deg, #06101f 0%, var(--bg-void) 44%, #01040b 100%);
     color: var(--text);
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior: none;
 }
 body.left-panel-collapsed {
     --left-w: 0px;
@@ -97,6 +99,7 @@ body.right-panel-collapsed {
     background:
         radial-gradient(circle at top, rgba(59,130,246,0.08), transparent 30%),
         linear-gradient(180deg, rgba(2,6,23,0.96), rgba(2,6,23,1));
+    contain: strict;
 }
 #map-container canvas { display: block; }
 

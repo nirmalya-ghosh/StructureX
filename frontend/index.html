@@ -5,13 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="StructureX — AI Digital Twin Command Center for Smart City Infrastructure Risk Intelligence">
     <title>StructureX | AI Digital Twin Command Center</title>
-    <link rel="stylesheet" href="/static/index.css?v=21">
+    <link rel="preconnect" href="https://cdn.maptiler.com" crossorigin>
+    <link rel="preconnect" href="https://api.maptiler.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="dns-prefetch" href="https://nominatim.openstreetmap.org">
+    <link rel="dns-prefetch" href="https://api.open-meteo.com">
+    <link rel="preload" href="/static/index.css?v=22" as="style">
+    <link rel="stylesheet" href="/static/index.css?v=22">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <script src="https://cdn.plot.ly/plotly-2.29.1.min.js"></script>
     <!-- MapTiler SDK -->
     <link href="https://cdn.maptiler.com/maptiler-sdk-js/v3.10.2/maptiler-sdk.css" rel="stylesheet" />
-    <script src="https://cdn.maptiler.com/maptiler-sdk-js/v3.10.2/maptiler-sdk.umd.min.js"></script>
+    <script src="https://cdn.maptiler.com/maptiler-sdk-js/v3.10.2/maptiler-sdk.umd.min.js" defer></script>
     <script>
         // Session Check
         (function() {
@@ -588,7 +595,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=21" defer></script>
+    <script src="/static/app.js?v=22" defer></script>
     <!-- Mobile Drawer Override Script -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
