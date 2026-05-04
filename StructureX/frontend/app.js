@@ -109,6 +109,41 @@ const INDIA_ADMIN_AREAS = [
     center: [lng, lat],
     properties: { source: "India admin", class: "administrative", type },
 }));
+const KNOWN_LANDMARKS = [
+    {
+        id: "known-taj-mahal",
+        text: "Taj Mahal",
+        place_name: "Taj Mahal, Dharmapuri, Forest Colony, Tajganj, Agra, Uttar Pradesh, India",
+        center: [78.0421, 27.1751],
+        bbox: [78.0397, 27.1727, 78.0448, 27.1778],
+        footprint: { widthMeters: 92, depthMeters: 92, height: 73 },
+        aliases: ["taj", "taje", "taaj", "taj mahal", "tajmahal", "the taj mahal"],
+        properties: { source: "StructureX", class: "historic", type: "monument", render_height: 73, height: 73 },
+        place_type: ["poi", "landmark"],
+    },
+    {
+        id: "known-india-gate",
+        text: "India Gate",
+        place_name: "India Gate, Kartavya Path, New Delhi, Delhi, India",
+        center: [77.2295, 28.6129],
+        bbox: [77.2279, 28.6114, 77.2311, 28.6144],
+        footprint: { widthMeters: 42, depthMeters: 32, height: 42 },
+        aliases: ["india gate"],
+        properties: { source: "StructureX", class: "historic", type: "monument", render_height: 42, height: 42 },
+        place_type: ["poi", "landmark"],
+    },
+    {
+        id: "known-gateway-of-india",
+        text: "Gateway of India",
+        place_name: "Gateway of India, Apollo Bandar, Colaba, Mumbai, Maharashtra, India",
+        center: [72.8347, 18.9220],
+        bbox: [72.8332, 18.9206, 72.8361, 18.9233],
+        footprint: { widthMeters: 45, depthMeters: 28, height: 26 },
+        aliases: ["gateway of india"],
+        properties: { source: "StructureX", class: "historic", type: "monument", render_height: 26, height: 26 },
+        place_type: ["poi", "landmark"],
+    },
+];
 const WEATHER_CODE_LABELS = {
     0: "Clear sky",
     1: "Mainly clear",
@@ -1666,6 +1701,7 @@ async function runPlaceSearch(query, options = {}) {
         }
 
         getIndiaAdminMatches(query).forEach((feature) => addSearchFeature(features, feature));
+        getKnownLandmarkMatches(query).forEach((feature) => addSearchFeature(features, feature));
         features = rankSearchFeatures(features, query);
         if (options.voiceMode) {
             features = rankVoiceSearchFeatures(features, query, { preferBuildings: Boolean(options.preferBuildings) });
@@ -1824,6 +1860,23 @@ function getIndiaAdminMatches(query) {
     });
 }
 
+function getKnownLandmarkMatches(query) {
+    const clean = normalizeSearchText(query);
+    if (clean.length < 2) {
+        return [];
+    }
+    return KNOWN_LANDMARKS.filter((landmark) => {
+        const names = [landmark.text, landmark.place_name, ...(landmark.aliases || [])].map(normalizeSearchText);
+        return names.some((name) => name === clean || name.includes(clean) || clean.includes(name));
+    }).map((landmark) => ({
+        ...landmark,
+        properties: {
+            ...(landmark.properties || {}),
+            source: "StructureX",
+        },
+    }));
+}
+
 function addSearchFeature(features, feature) {
     if (!feature?.center || !Number.isFinite(Number(feature.center[0])) || !Number.isFinite(Number(feature.center[1]))) {
         return;
@@ -1879,7 +1932,9 @@ function voiceSearchFeatureScore(feature, cleanQuery, options = {}) {
     let score = searchFeatureScore(feature, cleanQuery);
     if (exact) score += 90;
     if (full.includes(cleanQuery)) score += 35;
+    if (source === "structurex") score += 120;
     if (source === "osm") score += 12;
+    if (cls.includes("historic") || cls.includes("tourism") || type.includes("monument") || type.includes("attraction")) score += 46;
     if (placeTypes.includes("address") || placeTypes.includes("poi")) score += 40;
     if (placeTypes.includes("street") || placeTypes.includes("road")) score += 24;
     if (cls.includes("building") || type.includes("building") || cls.includes("amenity") || cls.includes("shop") || cls.includes("office")) score += 34;
@@ -5571,6 +5626,9 @@ function initVoiceAssistant() {
         if (isVoiceInterruptCommand(command)) {
             return { intent: "stop_speaking" };
         }
+        if (/\b(change|switch|set|use|next|different)\b.*\bvoice\b|\bvoice\b.*\b(change|switch|different|next)\b/.test(command)) {
+            return { intent: "change_voice", preference: extractVoicePreference(command) };
+        }
         if (/\b(my location|current location|live location|open location|where am i)\b/.test(command)) {
             return { intent: "location" };
         }
@@ -5621,6 +5679,22 @@ function initVoiceAssistant() {
         return /\b(stop|stop talking|quiet|cancel|cancel speech|stop speaking|cut|cut it|shut up|enough)\b/.test(command);
     }
 
+    function extractVoicePreference(command) {
+        if (/\b(male|man|boy|guy|david)\b/.test(command)) {
+            return "male";
+        }
+        if (/\b(female|woman|girl|jenny|aria|zira)\b/.test(command)) {
+            return "female";
+        }
+        if (/\b(indian|india|hindi)\b/.test(command)) {
+            return "indian";
+        }
+        if (/\b(english|us|american|uk|british)\b/.test(command)) {
+            return "english";
+        }
+        return "next";
+    }
+
     function extractVoicePlaceQuery(command) {
         let query = command
             .replace(/\b(search for|search|find|show me|show|open|go to|navigate to|take me to|locate|look up)\b/g, " ")
@@ -5656,6 +5730,10 @@ function initVoiceAssistant() {
         if (command.intent === "location") {
             speakText("Opening your live location.");
             requestUserLocation({ source: "voice-command" });
+            return;
+        }
+        if (command.intent === "change_voice") {
+            await changeAssistantVoice(command.preference);
             return;
         }
         if (command.intent === "weather") {
@@ -5737,7 +5815,15 @@ function initVoiceAssistant() {
             return;
         }
         if (!analyze) {
-            speakText(`Mapped ${label}. The 3D building layer is kept active, so you can say scan this area or tap a building.`);
+            const highlighted = await previewNearestBuildingNear(
+                { lng: Number(selected.center[0]), lat: Number(selected.center[1]) },
+                label,
+                selected
+            );
+            speakText(highlighted
+                ? `Mapped ${label}. I highlighted the nearest mapped 3D structure in blue. Say scan this to run the structural report.`
+                : `Mapped ${label}. I kept the 3D building layer active, but no nearby 3D footprint was available to highlight.`
+            );
             return;
         }
 
@@ -5755,11 +5841,90 @@ function initVoiceAssistant() {
             speakText("The map is still loading.");
             return;
         }
+        if (state.selectedBuilding?.previewOnly && state.selectedBuilding.feature && state.selectedBuilding.lngLat) {
+            const point = state.map.project([state.selectedBuilding.lngLat.lng, state.selectedBuilding.lngLat.lat]);
+            pendingVoiceAnalysisNarration = true;
+            analyzeBuilding(state.selectedBuilding.feature, state.selectedBuilding.lngLat, point);
+            speakText(`Running the structural scan for ${state.selectedBuilding.label || "the highlighted building"}.`);
+            return;
+        }
         const center = state.map.getCenter();
         const didSelect = await analyzeNearestBuildingNear({ lng: center.lng, lat: center.lat }, "the map center");
         if (!didSelect) {
             speakText("I could not find a selectable 3D building at the center of the map.");
         }
+    }
+
+    async function previewNearestBuildingNear(lngLat, label, searchFeature = null) {
+        if (!state.mapReady || !state.map?.getLayer("3d-buildings")) {
+            return false;
+        }
+        if (state.map.getZoom() < 16.8) {
+            centerOnCoordinates([lngLat.lng, lngLat.lat], 18.0);
+        }
+        await waitForMapIdle(2200);
+        let feature = findNearestRenderedBuilding(lngLat);
+        let featureLngLat = null;
+        if (!feature) {
+            feature = createLandmarkFallbackFeature(searchFeature, lngLat);
+            if (!feature) {
+                return false;
+            }
+            centerOnCoordinates([lngLat.lng, lngLat.lat], 18.6);
+        }
+        featureLngLat = getFeatureLngLat(feature) || lngLat;
+        const point = state.map.project([featureLngLat.lng, featureLngLat.lat]);
+        highlightBuilding(feature, featureLngLat, point);
+        state.selectedBuilding = {
+            feature,
+            lngLat: featureLngLat,
+            key: getBuildingSelectionKey(feature, featureLngLat),
+            previewOnly: true,
+            label,
+        };
+        setSystemStatus(`Voice highlighted ${label}`);
+        return true;
+    }
+
+    function createLandmarkFallbackFeature(searchFeature, lngLat) {
+        if (!searchFeature || String(searchFeature.properties?.source || "").toLowerCase() !== "structurex") {
+            return null;
+        }
+        const center = Array.isArray(searchFeature.center)
+            ? { lng: Number(searchFeature.center[0]), lat: Number(searchFeature.center[1]) }
+            : lngLat;
+        if (!Number.isFinite(center.lng) || !Number.isFinite(center.lat)) {
+            return null;
+        }
+
+        const footprint = searchFeature.footprint || {};
+        const widthMeters = Number(footprint.widthMeters || 48);
+        const depthMeters = Number(footprint.depthMeters || 36);
+        const latMeters = 111_320;
+        const lngMeters = Math.max(1, 111_320 * Math.cos((center.lat * Math.PI) / 180));
+        const halfLng = (widthMeters / 2) / lngMeters;
+        const halfLat = (depthMeters / 2) / latMeters;
+        const ring = [
+            [center.lng - halfLng, center.lat - halfLat],
+            [center.lng + halfLng, center.lat - halfLat],
+            [center.lng + halfLng, center.lat + halfLat],
+            [center.lng - halfLng, center.lat + halfLat],
+            [center.lng - halfLng, center.lat - halfLat],
+        ];
+        const height = Number(footprint.height || searchFeature.properties?.render_height || 32);
+        return {
+            type: "Feature",
+            id: `voice-landmark-${searchFeature.id || normalizeSearchText(searchFeature.text)}`,
+            geometry: { type: "Polygon", coordinates: [ring] },
+            properties: {
+                ...(searchFeature.properties || {}),
+                name: searchFeature.text || searchFeature.place_name || "Selected landmark",
+                source: "StructureX",
+                render_height: height,
+                height,
+                voice_landmark: true,
+            },
+        };
     }
 
     async function speakWeatherSummary() {
@@ -5959,6 +6124,55 @@ function initVoiceAssistant() {
             return "moderate risk";
         }
         return "low risk";
+    }
+
+    async function changeAssistantVoice(preference = "next") {
+        await waitForVoiceCatalog();
+        if (!voiceSelect || !availableVoices.length) {
+            speakText("Voice options are still loading. Try again in a moment.");
+            return;
+        }
+
+        const currentIndex = Number(voiceSelect.value || 0);
+        let targetIndex = -1;
+        const findVoice = (patterns) =>
+            availableVoices.findIndex((voice) => {
+                const label = `${voice.name} ${voice.lang}`.toLowerCase();
+                return patterns.some((pattern) => label.includes(pattern));
+            });
+
+        if (preference === "female") {
+            targetIndex = findVoice(["aria", "jenny", "zira", "samantha", "female", "sonia", "natasha"]);
+        } else if (preference === "male") {
+            targetIndex = findVoice(["guy", "david", "mark", "male", "ravi", "aarav"]);
+        } else if (preference === "indian") {
+            targetIndex = findVoice(["en-in", "hi-in", "india", "indian", "ravi", "heera"]);
+        } else if (preference === "english") {
+            targetIndex = findVoice(["en-us", "en-gb", "english", "aria", "jenny", "guy"]);
+        }
+
+        if (targetIndex < 0 || targetIndex === currentIndex) {
+            targetIndex = (currentIndex + 1) % availableVoices.length;
+        }
+
+        voiceSelect.value = String(targetIndex);
+        const selectedVoice = availableVoices[targetIndex];
+        const readableName = selectedVoice?.name?.replace(/Microsoft|Google/gi, "").replace(/\s+/g, " ").trim() || "the next voice";
+        setVoiceCommandStatus("Voice changed", readableName);
+        speakText(`Voice changed to ${readableName}.`);
+    }
+
+    async function waitForVoiceCatalog(timeout = 2200) {
+        const started = Date.now();
+        while (Date.now() - started < timeout) {
+            loadVoices();
+            if (availableVoices.length) {
+                return true;
+            }
+            await sleep(180);
+        }
+        loadVoices();
+        return availableVoices.length > 0;
     }
 
     function initVoicePanelDrag() {
