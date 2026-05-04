@@ -1,0 +1,13 @@
+numpy
+pandas
+scikit-learn
+torch
+xgboost
+shap
+fastapi
+uvicorn
+pydantic
+plotly
+joblib
+python-multipart
+google-generativeai

@@ -1,0 +1,6 @@
+location_id,soil_type,soil_moisture,soil_density,liquefaction_risk
+LOC_001,clay,0.4622,1633.91,0.4636
+LOC_002,sand,0.2207,1454.57,0.538
+LOC_003,silt,0.3004,1448.58,0.5228
+LOC_004,gravel,0.1508,1810.29,0.3037
+LOC_005,rock,0.0108,2561.32,0.089
