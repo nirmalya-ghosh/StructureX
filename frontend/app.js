@@ -889,7 +889,7 @@ function renderBuildingAnalysis(result, locationMeta, height, lngLat, feature) {
     $("#det-district").textContent = locationMeta.address;
 
     const risk = Number(result.risk_score || 0);
-    const level = risk >= 70 ? "critical" : risk >= 40 ? "warning" : "safe";
+    const level = risk >= 55 ? "critical" : risk >= 20 ? "warning" : "safe";
     const color = getRiskColor(risk);
     const type = feature.properties?.type || "building";
     const icon = type.includes("bridge") ? "fa-bridge" : type.includes("industrial") ? "fa-industry" : "fa-building";
@@ -907,7 +907,7 @@ function renderBuildingAnalysis(result, locationMeta, height, lngLat, feature) {
                 <div class="ai-risk-score" style="color:${color}">${risk.toFixed(1)}</div>
             </div>
             <div class="review-status-row">
-                <span class="review-status-chip ${level}">${riskToLabel(risk)}</span>
+                <span class="review-status-chip ${level}">${escapeHtml(result.risk_category || riskToLabel(risk))}</span>
                 <span class="review-status-meta">${profile.priority}</span>
             </div>
             <div class="ai-summary">${escapeHtml(result.summary || "No executive summary returned.")}</div>
@@ -1042,7 +1042,7 @@ function deriveBuildingProfile(feature, height, result, locationMeta, lngLat) {
         estimatedFloors,
         operationalExposure: result.operational_exposure || (estimatedFloors >= 15 ? "High occupancy / high consequence" : "Moderate occupancy / standard consequence"),
         constructionProfile: result.construction_profile || (height > 45 ? "Likely reinforced concrete or composite frame with lateral-force considerations." : "Likely reinforced concrete frame or masonry-supported urban construction."),
-        priority: result.inspection_priority || (Number(result.risk_score || 0) >= 70 ? "Immediate engineering inspection recommended." : Number(result.risk_score || 0) >= 40 ? "Priority field inspection recommended." : "Routine inspection cadence remains acceptable."),
+        priority: result.inspection_priority || (Number(result.risk_score || 0) >= 55 ? "Immediate engineering inspection recommended." : Number(result.risk_score || 0) >= 20 ? "Priority field inspection recommended." : "Routine inspection cadence remains acceptable."),
         confidenceNotes: result.confidence_notes || "This review is based on map geometry, location context, and inferred engineering assumptions. A survey-grade assessment would require structural drawings, material data, and on-site inspection.",
         footprintProfile: feature.geometry?.type === "Polygon" ? "Single footprint polygon" : feature.geometry?.type === "MultiPolygon" ? "Composite footprint geometry" : "Geometry available",
         featureKind: type || "building",
@@ -3903,33 +3903,39 @@ function setSystemStatus(text) {
 }
 
 function getRiskColor(risk) {
-    if (risk >= 70) {
+    if (risk >= 55) {
         return THEME.critical;
     }
-    if (risk >= 40) {
+    if (risk >= 20) {
         return THEME.warning;
     }
     return THEME.safe;
 }
 
 function riskToClass(risk) {
-    if (risk >= 70) {
+    if (risk >= 55) {
         return "crit";
     }
-    if (risk >= 40) {
+    if (risk >= 20) {
         return "warn";
     }
     return "safe";
 }
 
 function riskToLabel(risk) {
-    if (risk >= 70) {
+    if (risk >= 75) {
         return "CRITICAL";
     }
-    if (risk >= 40) {
-        return "WARNING";
+    if (risk >= 55) {
+        return "HIGH RISK";
     }
-    return "SAFE";
+    if (risk >= 30) {
+        return "MODERATE RISK";
+    }
+    if (risk >= 10) {
+        return "LOW RISK";
+    }
+    return "VERY LOW";
 }
 
 function getTimeToFailure(probability) {

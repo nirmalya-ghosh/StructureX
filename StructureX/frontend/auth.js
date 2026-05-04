@@ -89,6 +89,10 @@ function getCallbackUrl() {
   return `${window.location.origin}${AUTH_CALLBACK_PATH}`;
 }
 
+function showAuthSuccess(intent) {
+  window.alert(intent === "signup" ? "Sign up successful." : "Login successful.");
+}
+
 function setGoogleButtonLoading(button) {
   const original = button.innerHTML;
   button.disabled = true;
@@ -179,8 +183,10 @@ async function finishOAuthCallback() {
 
       if (data && data.session) {
         saveUserFromSession(data.session);
+        const intent = localStorage.getItem("sx_auth_intent") || "login";
         localStorage.removeItem("sx_auth_intent");
-        setStatus("Signed in. Opening dashboard...");
+        setStatus("Opening dashboard...");
+        showAuthSuccess(intent);
         window.location.replace(DASHBOARD_PATH);
         return true;
       }
@@ -191,6 +197,7 @@ async function finishOAuthCallback() {
     throw new Error("Google sign-in finished, but no Supabase session was saved.");
   } catch (error) {
     console.error("Auth callback failed:", error);
+    document.body.classList.add("callback-error");
     setStatus(error.message || "Google sign-in could not be completed.");
     const panel = document.querySelector(".legal-panel");
     if (panel && !panel.querySelector(".auth-callback-actions")) {
@@ -245,6 +252,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     setTimeout(() => {
       localStorage.setItem("sx_user", JSON.stringify({ email, name: "User" }));
+      showAuthSuccess("login");
       window.location.href = DASHBOARD_PATH;
     }, 900);
   });
@@ -260,6 +268,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     setTimeout(() => {
       localStorage.setItem("sx_user", JSON.stringify({ email, name }));
+      showAuthSuccess("signup");
       window.location.href = DASHBOARD_PATH;
     }, 900);
   });

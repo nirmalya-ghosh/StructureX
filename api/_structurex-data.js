@@ -81,20 +81,26 @@ function round(value, digits = 3) {
 }
 
 function riskCategory(score) {
-  if (score >= 70) {
+  if (score >= 75) {
     return "CRITICAL";
   }
-  if (score >= 40) {
-    return "WARNING";
+  if (score >= 55) {
+    return "HIGH RISK";
   }
-  return "SAFE";
+  if (score >= 30) {
+    return "MODERATE RISK";
+  }
+  if (score >= 10) {
+    return "LOW RISK";
+  }
+  return "VERY LOW";
 }
 
 function statusForScore(score) {
-  if (score >= 70) {
+  if (score >= 55) {
     return "critical";
   }
-  if (score >= 45) {
+  if (score >= 20) {
     return "watch";
   }
   return "stable";
@@ -247,44 +253,144 @@ function deriveBuildingContext(payload = {}) {
   };
 }
 
+function stableUnitInterval(value) {
+  const text = String(value || "structurex");
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) % 1000) / 1000;
+}
+
+function regionalHazardScore(context) {
+  const area = `${context.areaName} ${context.address}`.toLowerCase();
+  if (area.includes("guwahati") || area.includes("assam") || area.includes("sikkim") || area.includes("himalaya")) {
+    return 18;
+  }
+  if (area.includes("delhi") || area.includes("gurugram") || area.includes("noida") || area.includes("dehradun")) {
+    return 11;
+  }
+  if (area.includes("gujarat") || area.includes("kutch") || area.includes("ahmedabad")) {
+    return 13;
+  }
+  if (area.includes("mumbai") || area.includes("kolkata") || area.includes("chennai") || area.includes("kochi")) {
+    return 6;
+  }
+  if (area.includes("bengaluru") || area.includes("bangalore") || area.includes("karnataka")) {
+    return 2.2;
+  }
+
+  const latitudeBand = Math.abs(context.lat);
+  const longitudeBand = Math.abs(context.lng);
+  return clamp(latitudeBand * 0.055 + longitudeBand * 0.018, 1.2, 9);
+}
+
+function assetExposureScore(context) {
+  const type = context.assetType;
+  if (type.includes("bridge")) return 16;
+  if (type.includes("industrial") || type.includes("plant") || type.includes("warehouse")) return 11;
+  if (type.includes("hospital") || type.includes("school") || type.includes("public")) return 8;
+  if (type.includes("commercial") || type.includes("retail") || type.includes("office")) return 5;
+  return 1.5;
+}
+
+function heightExposureScore(context) {
+  if (context.estimatedFloors <= 1 && context.height <= 6) return 0.4;
+  if (context.estimatedFloors <= 3 && context.height <= 12) return 1.4;
+  if (context.isHighrise) return 20 + Math.min(10, (context.estimatedFloors - 18) * 0.9);
+  if (context.isMidrise) return 7 + Math.min(8, (context.estimatedFloors - 8) * 0.8);
+  return Math.min(6, context.estimatedFloors * 0.9);
+}
+
+function climateExposureScore(context) {
+  const area = `${context.areaName} ${context.address}`.toLowerCase();
+  let score = 1.2;
+  if (area.includes("mumbai") || area.includes("chennai") || area.includes("kolkata") || area.includes("kochi")) {
+    score += 5;
+  }
+  if (area.includes("basement") || area.includes("lake") || area.includes("drain") || area.includes("river")) {
+    score += 3;
+  }
+  if (context.height > 45) {
+    score += 2;
+  }
+  return score;
+}
+
 function buildingAnalysis(payload = {}) {
   const context = deriveBuildingContext(payload);
-  const coordinateExposure = Math.min(8, Math.abs(context.lat) * 0.04 + Math.abs(context.lng) * 0.02);
-  const riskScore = clamp(35 + (context.isHighrise ? 15 : 0) + coordinateExposure, 0, 100);
-  const inspectionPriority = context.isHighrise
-    ? "Priority structural review advised within the next engineering cycle"
-    : "Routine structural review advised with focused checks on envelope and drainage paths";
+  const regional = regionalHazardScore(context);
+  const asset = assetExposureScore(context);
+  const heightExposure = heightExposureScore(context);
+  const climate = climateExposureScore(context);
+  const uncertainty = stableUnitInterval(`${context.address}|${context.lat.toFixed(5)}|${context.lng.toFixed(5)}|${context.height}`) * 2.2;
+  const riskScore = clamp(0.5 + regional + asset + heightExposure + climate + uncertainty, 0.5, 96);
+  const category = riskCategory(riskScore);
+  const inspectionPriority = riskScore >= 55
+    ? "High-priority engineering review recommended before relying on this asset for critical occupancy or operations"
+    : riskScore >= 30
+      ? "Targeted structural review advised with checks for visible distress, load path irregularity, and water ingress"
+      : riskScore >= 10
+        ? "Low-risk asset posture; keep routine inspection active and verify basic drainage, facade, and crack observations"
+        : "Very low indicative risk; routine observation is sufficient unless field distress is visible";
+  const smartReason = `score drivers: regional ${regional.toFixed(1)}, height ${heightExposure.toFixed(1)}, asset ${asset.toFixed(1)}, climate ${climate.toFixed(1)}, uncertainty ${uncertainty.toFixed(1)}`;
+  const shortLabel = category.toLowerCase();
+
+  const occupancyProfile = riskScore >= 55
+    ? "High consequence occupancy / operations should be verified"
+    : context.occupancyProfile;
+  const maintenanceFocus = riskScore >= 30
+    ? "Highest-maintenance hotspots include lateral load path discontinuities, facade anchorage, water ingress paths, roof drainage, corrosion exposure, and foundation settlement indicators."
+    : "Primary maintenance focus should remain on normal envelope care, drainage checks, minor crack logging, waterproofing, and routine serviceability observations.";
 
   return {
-    summary: `Deep structural scan for ${context.address}. This ${context.assetType} is estimated at ${context.height.toFixed(1)} meters and ${context.estimatedFloors} floors, with an indicative risk profile of ${riskScore.toFixed(1)}/100 based on mapped geometry, inferred structural form, and regional exposure.`,
-    asset_specific_findings: `The selected building only was assessed using its mapped footprint, height, coordinates, and localized urban context in ${context.areaName}. Primary review attention is on ${context.slendernessClass} behavior, load path continuity, and water ingress / facade durability risk.`,
-    structural_integrity: `Likely structural system: ${context.likelyStructuralSystem}. Critical stress concentrations would be expected at transfer zones, irregular floor plates, podium transitions, and roof-level service zones.`,
+    summary: `Deep structural scan for ${context.address}. This ${context.assetType} is estimated at ${context.height.toFixed(1)} meters and ${context.estimatedFloors} floors. The calibrated indicative risk is ${riskScore.toFixed(1)}/100 (${shortLabel}) using mapped height, inferred asset type, regional hazard, climate exposure, and location-specific uncertainty.`,
+    asset_specific_findings: `The selected building only was assessed using its mapped footprint, height, coordinates, and localized urban context in ${context.areaName}. The current posture is ${shortLabel}; ${smartReason}. Primary review attention is on ${context.slendernessClass} behavior, load path continuity, and water ingress / facade durability risk.`,
+    structural_integrity: `Likely structural system: ${context.likelyStructuralSystem}. Critical stress concentrations would be expected at transfer zones, irregular floor plates, podium transitions, and roof-level service zones. For low scores, this remains a routine verification item rather than an immediate hazard signal.`,
     load_path_and_lateral_system:
-      "Lateral demand is expected to transfer through frames, cores, and diaphragm action. Any discontinuity between vertical elements, soft-story behavior, or stiffness irregularity should be treated as a high-value inspection target.",
-    seismic_vulnerability: `Regional seismic demand around ${context.areaName} suggests the building should be checked for torsional irregularity, drift compatibility, non-structural anchorage, and post-cracking serviceability, especially if constructed prior to the latest code cycle.`,
+      riskScore >= 30
+        ? "Lateral demand should be traced through frames, cores, and diaphragm action. Any discontinuity between vertical elements, soft-story behavior, or stiffness irregularity should be treated as a priority inspection target."
+        : "No high-risk lateral-system trigger is inferred from the available map data. Keep routine checks focused on visible cracking, additions, soft-story openings, and undocumented alterations.",
+    seismic_vulnerability: `Regional seismic demand around ${context.areaName} contributes ${regional.toFixed(1)} points to the score. The building should be checked for torsional irregularity, drift compatibility, non-structural anchorage, and post-cracking serviceability if field conditions suggest distress or if the building predates current code practice.`,
     soil_foundation: `Likely foundation profile: ${context.likelyFoundation}. Settlement, seasonal moisture variation, and buried utility influence remain the main geotechnical uncertainties without survey-grade data.`,
     climate_impact:
-      "Climate exposure should be reviewed for thermal cycling, moisture intrusion, roof drainage overload, and envelope aging. The most likely degradation pathways are waterproofing fatigue, sealant failure, and corrosion initiation in exposed reinforcement or connections.",
+      riskScore >= 30
+        ? "Climate exposure should be reviewed for thermal cycling, moisture intrusion, roof drainage overload, and envelope aging. Waterproofing fatigue, sealant failure, and corrosion initiation can materially raise risk if field evidence is present."
+        : "Climate exposure is currently treated as a low-to-routine contributor. Continue drainage, roof, and envelope maintenance so moisture does not become the main degradation path.",
     environmental_hazards:
       "Localized hazards to review include pluvial flooding, drainage congestion, adjacent excavation effects, heat retention, and long-term atmospheric corrosion exposure.",
     serviceability_outlook:
-      "Expected serviceability issues include crack propagation at infill interfaces, water ingress around facade penetrations, floor vibration / deflection sensitivity, and differential movement between primary frame and non-structural elements.",
-    maintenance_hotspots:
-      "Highest-maintenance hotspots are likely to include roof waterproofing, parapet edges, podium transitions, movement joints, basement moisture protection, and facade anchorage / glazing support details.",
+      riskScore >= 30
+        ? "Expected serviceability issues may include crack propagation at infill interfaces, water ingress around facade penetrations, floor vibration / deflection sensitivity, and differential movement between primary frame and non-structural elements."
+        : "Expected serviceability issues are low-order unless visible distress is present. Routine crack logs, waterproofing checks, and minor vibration observations should be sufficient for this indicative posture.",
+    maintenance_hotspots: maintenanceFocus,
     lifecycle_factors:
       "The asset should be treated as operating in a normal urban lifecycle regime where inspection quality, moisture control, and deferred maintenance strongly influence long-term resilience.",
     construction_profile: `${context.likelyStructuralSystem}. In the absence of drawings, the building should be assumed to follow common regional urban construction practice with possible variation in infill quality, reinforcement detailing, and waterproofing execution.`,
-    operational_exposure: context.occupancyProfile,
+    operational_exposure: occupancyProfile,
     inspection_priority: inspectionPriority,
     confidence_notes:
-      "This deep scan is building-specific but inference-led. It relies on map geometry, coordinates, regional engineering assumptions, and asset heuristics rather than drawings, material tests, or an on-site survey.",
+      "This calibrated scan is building-specific but inference-led. It uses map height, asset heuristics, regional hazard, climate exposure, and deterministic location variation; it is not a substitute for drawings, material tests, or on-site structural inspection.",
     data_gaps:
-      "Highest-value missing inputs are structural drawings, construction year, retrofit history, material strengths, foundation details, occupancy load regime, crack / corrosion observations, and any measured tilt, vibration, or settlement data.",
+      "Highest-value missing inputs are structural drawings, construction year, retrofit history, material strengths, foundation details, occupancy load regime, crack / corrosion observations, and measured tilt, vibration, or settlement data.",
     estimated_floors: context.estimatedFloors,
+    risk_category: category,
+    score_drivers: {
+      regional_hazard: round(regional, 1),
+      height_exposure: round(heightExposure, 1),
+      asset_exposure: round(asset, 1),
+      climate_exposure: round(climate, 1),
+      uncertainty: round(uncertainty, 1),
+    },
     recommendations: [
-      "Perform a building-specific visual condition survey focused on cracks, water ingress, and facade distress.",
-      "Verify the vertical and lateral load path at podium, transfer, and rooftop service zones.",
-      "Prioritize waterproofing, drainage, and envelope maintenance before deeper material deterioration develops.",
+      riskScore >= 30
+        ? "Perform a targeted visual condition survey focused on cracks, water ingress, facade distress, and irregular load paths."
+        : "Keep a routine visual condition survey focused on cracks, water ingress, and facade distress.",
+      "Verify the vertical and lateral load path at podium, transfer, and rooftop service zones when drawings or site access are available.",
+      riskScore >= 30
+        ? "Prioritize waterproofing, drainage, envelope maintenance, and any visible corrosion before deeper material deterioration develops."
+        : "Maintain basic waterproofing, drainage, and envelope care as preventive controls.",
       "Collect drawings, construction age, and retrofit history to upgrade this inference-led scan into a survey-grade structural review.",
     ],
     risk_score: round(riskScore, 1),

@@ -41,18 +41,15 @@ body {
         linear-gradient(180deg, #020617 0%, #08111f 100%);
 }
 
-body::-webkit-scrollbar,
-.auth-content::-webkit-scrollbar {
+body::-webkit-scrollbar {
     width: 9px;
 }
 
-body::-webkit-scrollbar-track,
-.auth-content::-webkit-scrollbar-track {
+body::-webkit-scrollbar-track {
     background: rgba(15, 23, 42, 0.48);
 }
 
-body::-webkit-scrollbar-thumb,
-.auth-content::-webkit-scrollbar-thumb {
+body::-webkit-scrollbar-thumb {
     background: rgba(59, 130, 246, 0.48);
     border-radius: 999px;
     border: 2px solid rgba(15, 23, 42, 0.55);
@@ -195,18 +192,15 @@ body::-webkit-scrollbar-thumb,
 /* Forms */
 .auth-content {
     position: relative;
-    height: min(540px, calc(100vh - 285px));
-    min-height: 420px;
-    overflow-x: hidden;
-    overflow-y: auto;
-    padding-right: 4px;
-    scroll-behavior: smooth;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    padding-right: 0;
 }
 
 .auth-form {
-    position: absolute;
-    top: 0;
-    left: 0;
+    position: static;
+    display: none;
     width: 100%;
     opacity: 0;
     pointer-events: none;
@@ -215,6 +209,7 @@ body::-webkit-scrollbar-thumb,
 }
 
 .auth-form.active {
+    display: block;
     opacity: 1;
     pointer-events: all;
     transform: translateX(0);
@@ -555,5 +550,10 @@ body::-webkit-scrollbar-thumb,
     .auth-header { margin-top: 0; }
     .auth-card { padding: 30px; }
     .auth-tabs { margin-bottom: 22px; }
-    .auth-content { height: min(520px, calc(100vh - 230px)); min-height: 360px; }
+    .auth-content { height: auto; min-height: 0; }
+}
+
+.auth-callback-body:not(.callback-error) .legal-panel {
+    opacity: 0;
+    pointer-events: none;
 }
