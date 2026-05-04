@@ -1666,7 +1666,11 @@ async function runPlaceSearch(query, options = {}) {
         }
 
         getIndiaAdminMatches(query).forEach((feature) => addSearchFeature(features, feature));
-        features = rankSearchFeatures(features, query).slice(0, 16);
+        features = rankSearchFeatures(features, query);
+        if (options.voiceMode) {
+            features = rankVoiceSearchFeatures(features, query, { preferBuildings: Boolean(options.preferBuildings) });
+        }
+        features = features.slice(0, 16);
 
         state.latestSearchResults = features;
 
@@ -1853,6 +1857,35 @@ function searchFeatureScore(feature, cleanQuery) {
     if (source === "India admin") score += 18;
     if (source === "MapTiler") score += 8;
     if ((feature.properties?.class || "").includes("boundary")) score += 8;
+    return score;
+}
+
+function rankVoiceSearchFeatures(features, query, options = {}) {
+    const cleanQuery = normalizeSearchText(query);
+    return [...features].sort((a, b) =>
+        voiceSearchFeatureScore(b, cleanQuery, options) - voiceSearchFeatureScore(a, cleanQuery, options)
+    );
+}
+
+function voiceSearchFeatureScore(feature, cleanQuery, options = {}) {
+    const text = normalizeSearchText(feature.text || "");
+    const full = normalizeSearchText(feature.place_name || "");
+    const placeTypes = Array.isArray(feature.place_type) ? feature.place_type.join(" ").toLowerCase() : "";
+    const cls = String(feature.properties?.class || "").toLowerCase();
+    const type = String(feature.properties?.type || "").toLowerCase();
+    const source = String(feature.properties?.source || "").toLowerCase();
+    const exact = text === cleanQuery || full.startsWith(cleanQuery);
+
+    let score = searchFeatureScore(feature, cleanQuery);
+    if (exact) score += 90;
+    if (full.includes(cleanQuery)) score += 35;
+    if (source === "osm") score += 12;
+    if (placeTypes.includes("address") || placeTypes.includes("poi")) score += 40;
+    if (placeTypes.includes("street") || placeTypes.includes("road")) score += 24;
+    if (cls.includes("building") || type.includes("building") || cls.includes("amenity") || cls.includes("shop") || cls.includes("office")) score += 34;
+    if (type.includes("house") || type.includes("commercial") || type.includes("residential")) score += 22;
+    if (options.preferBuildings && (cls.includes("boundary") || placeTypes.includes("region") || placeTypes.includes("place"))) score -= 45;
+    if (options.preferBuildings && cleanQuery.length > 4 && text !== cleanQuery && !full.includes(cleanQuery)) score -= 30;
     return score;
 }
 
@@ -5464,6 +5497,26 @@ function initVoiceAssistant() {
         restartVoiceRecognitionSoon(320);
     }
 
+    function startListeningIfMicrophoneAlreadyAllowed() {
+        if (!SpeechRecognition || !navigator.permissions?.query) {
+            return;
+        }
+        navigator.permissions.query({ name: "microphone" })
+            .then((permissionStatus) => {
+                if (permissionStatus.state === "granted" && !commandListening) {
+                    window.setTimeout(() => startVoiceCommandListening({ announce: false }), 700);
+                }
+                permissionStatus.onchange = () => {
+                    if (permissionStatus.state === "granted" && !commandListening) {
+                        startVoiceCommandListening({ announce: false });
+                    }
+                };
+            })
+            .catch(() => {
+                // Some browsers expose SpeechRecognition but not microphone permission state.
+            });
+    }
+
     function processVoiceTranscript(transcript) {
         const parsed = parseVoiceCommand(transcript);
         const normalized = normalizeVoiceCommand(transcript);
@@ -5521,6 +5574,14 @@ function initVoiceAssistant() {
         if (/\b(my location|current location|live location|open location|where am i)\b/.test(command)) {
             return { intent: "location" };
         }
+        if (/\b(weather|temperature|wind|rain|humidity|climate)\b/.test(command)) {
+            const query = extractVoicePlaceQuery(command);
+            return query ? { intent: "weather_place", query } : { intent: "weather" };
+        }
+        if (/\b(earthquake|quake|seismic|scenario risk|risk level|risk score|hazard)\b/.test(command)) {
+            const query = extractVoicePlaceQuery(command);
+            return query ? { intent: "scenario_place", query } : { intent: "scenario_summary" };
+        }
         if (/\b(full report|read report|read everything)\b/.test(command)) {
             return { intent: "full_report" };
         }
@@ -5565,6 +5626,7 @@ function initVoiceAssistant() {
             .replace(/\b(search for|search|find|show me|show|open|go to|navigate to|take me to|locate|look up)\b/g, " ")
             .replace(/\b(select|choose|analyze|analyse|scan|inspect|review)\b/g, " ")
             .replace(/\b(tell me about|tell me|what is|where is)\b/g, " ")
+            .replace(/\b(weather|temperature|wind|rain|humidity|climate|earthquake|quake|seismic|scenario risk|risk level|risk score|hazard|risk)\b/g, " ")
             .replace(/\b(please|just|near me|nearby|nearest|closest|now)\b/g, " ")
             .replace(/\b(building|structure|area|city|town|village|place|in|at|near|around)\b/g, " ")
             .replace(/\b(this building|this area|this place|current area|current place)\b/g, " ")
@@ -5596,6 +5658,22 @@ function initVoiceAssistant() {
             requestUserLocation({ source: "voice-command" });
             return;
         }
+        if (command.intent === "weather") {
+            await speakWeatherSummary();
+            return;
+        }
+        if (command.intent === "weather_place") {
+            await runVoicePlaceCommand(command.query, { analyze: false, speakAfter: "weather" });
+            return;
+        }
+        if (command.intent === "scenario_summary") {
+            speakScenarioRiskSummary();
+            return;
+        }
+        if (command.intent === "scenario_place") {
+            await runVoicePlaceCommand(command.query, { analyze: false, speakAfter: "scenario" });
+            return;
+        }
         if (command.intent === "full_report") {
             speakSequence(getTextSegments("full"));
             return;
@@ -5615,7 +5693,7 @@ function initVoiceAssistant() {
         answerCurrentContext(command.text);
     }
 
-    async function runVoicePlaceCommand(query, { analyze = false } = {}) {
+    async function runVoicePlaceCommand(query, { analyze = false, speakAfter = null } = {}) {
         if (!query) {
             speakText("I need a place or building name.");
             return;
@@ -5635,6 +5713,8 @@ function initVoiceAssistant() {
 
         const selected = await runPlaceSearch(query, {
             autoSelectFirst: true,
+            voiceMode: true,
+            preferBuildings: analyze,
             selectOptions: {
                 skipAutoAnalysis: analyze,
                 skipBounds: true,
@@ -5647,6 +5727,15 @@ function initVoiceAssistant() {
         }
 
         const label = selected.text || selected.place_name || query;
+        if (speakAfter === "weather") {
+            await waitForWeatherTargetUpdate(2400);
+            await speakWeatherSummary();
+            return;
+        }
+        if (speakAfter === "scenario") {
+            speakScenarioRiskSummary();
+            return;
+        }
         if (!analyze) {
             speakText(`Mapped ${label}. The 3D building layer is kept active, so you can say scan this area or tap a building.`);
             return;
@@ -5671,6 +5760,89 @@ function initVoiceAssistant() {
         if (!didSelect) {
             speakText("I could not find a selectable 3D building at the center of the map.");
         }
+    }
+
+    async function speakWeatherSummary() {
+        if (!state.weatherTarget) {
+            speakText("Select or search a location first, then I can read the live weather.");
+            return;
+        }
+        if (!state.weatherData && !state.weatherLoading) {
+            await fetchWeatherForTarget(state.weatherTarget, { silent: true });
+        }
+        const payload = state.weatherData?.payload;
+        const current = payload?.current;
+        const target = state.weatherTarget.name || state.weatherTarget.area || "this area";
+        if (!current) {
+            speakText(`Live weather for ${target} is still loading.`);
+            return;
+        }
+        const label = weatherCodeToLabel(current.weather_code).toLowerCase();
+        const riskNote = buildWeatherRiskNote(current);
+        speakText(`Live weather for ${target}: ${Number(current.temperature_2m).toFixed(1)} degrees Celsius, feels like ${Number(current.apparent_temperature).toFixed(1)}. Conditions are ${label}. Wind is ${Number(current.wind_speed_10m).toFixed(1)} kilometers per hour, gusting to ${Number(current.wind_gusts_10m).toFixed(1)}. Humidity is ${Number(current.relative_humidity_2m).toFixed(0)} percent, cloud cover ${Number(current.cloud_cover).toFixed(0)} percent, and precipitation ${Number(current.precipitation).toFixed(1)} millimeters. ${riskNote}`);
+    }
+
+    function waitForWeatherTargetUpdate(timeout = 2200) {
+        const start = Date.now();
+        return new Promise((resolve) => {
+            const tick = () => {
+                if (!state.weatherLoading || state.weatherData?.payload || state.weatherData?.error || Date.now() - start > timeout) {
+                    resolve();
+                    return;
+                }
+                window.setTimeout(tick, 160);
+            };
+            tick();
+        });
+    }
+
+    function buildWeatherRiskNote(current) {
+        const wind = Number(current.wind_gusts_10m || current.wind_speed_10m || 0);
+        const rain = Number(current.precipitation || 0);
+        const visibilityKm = Number(current.visibility || 0) / 1000;
+        if (wind >= 55 || rain >= 20 || visibilityKm < 1) {
+            return "Infrastructure watch is elevated because weather can affect facade safety, drainage, and inspection visibility.";
+        }
+        if (wind >= 32 || rain >= 5 || visibilityKm < 3) {
+            return "Weather risk is moderate; review drainage, exposed facade elements, and temporary site loads.";
+        }
+        return "Weather risk is low for immediate structural screening.";
+    }
+
+    function buildWeatherVoiceBrief() {
+        const current = state.weatherData?.payload?.current;
+        const target = state.weatherTarget?.name || state.weatherTarget?.area;
+        if (!current || !target) {
+            return "Live weather is not available yet.";
+        }
+        return `Live weather for ${target}: ${Number(current.temperature_2m).toFixed(1)} degrees Celsius, ${weatherCodeToLabel(current.weather_code).toLowerCase()}, wind ${Number(current.wind_speed_10m).toFixed(1)} kilometers per hour, humidity ${Number(current.relative_humidity_2m).toFixed(0)} percent.`;
+    }
+
+    function buildScenarioVoiceBrief() {
+        const earthquake = Number(document.getElementById("sl-eq")?.value || 0);
+        const temperature = Number(document.getElementById("sl-temp")?.value || 0);
+        const soilMoisture = Number(document.getElementById("sl-moist")?.value || 0);
+        if (state.analysisData) {
+            const score = Number(state.analysisData.risk_score || 0);
+            return `Latest scenario risk is ${buildVoiceRiskLabel(score)}, score ${score.toFixed(1)} out of 100, with earthquake magnitude ${earthquake.toFixed(1)}.`;
+        }
+        const quickRisk = clampNumber(earthquake * 7.2 + Math.max(0, temperature - 35) * 0.8 + soilMoisture * 18, 0, 100);
+        return `Active scenario inputs: earthquake magnitude ${earthquake.toFixed(1)}, temperature ${temperature.toFixed(0)} degrees Celsius, soil moisture ${soilMoisture.toFixed(2)}, estimated screening risk ${quickRisk.toFixed(1)} out of 100.`;
+    }
+
+    function speakScenarioRiskSummary() {
+        const earthquake = Number(document.getElementById("sl-eq")?.value || 0);
+        const temperature = Number(document.getElementById("sl-temp")?.value || 0);
+        const soilMoisture = Number(document.getElementById("sl-moist")?.value || 0);
+        const target = state.weatherTarget?.area || state.weatherTarget?.name || "the selected area";
+        const data = state.analysisData;
+        if (data) {
+            const score = Number(data.risk_score || 0);
+            speakText(`Scenario risk for ${target}: ${buildVoiceRiskLabel(score)}, score ${score.toFixed(1)} out of 100. Earthquake magnitude is set to ${earthquake.toFixed(1)}, temperature ${temperature.toFixed(0)} degrees Celsius, and soil moisture ${soilMoisture.toFixed(2)}. Failure probability is ${(Number(data.failure_probability || 0) * 100).toFixed(1)} percent, with anomaly score ${Number(data.anomaly_score || 0).toFixed(2)}.`);
+            return;
+        }
+        const quickRisk = clampNumber(earthquake * 7.2 + Math.max(0, temperature - 35) * 0.8 + soilMoisture * 18, 0, 100);
+        speakText(`Current scenario setting for ${target}: estimated screening risk is ${buildVoiceRiskLabel(quickRisk)}, about ${quickRisk.toFixed(1)} out of 100. Earthquake magnitude is ${earthquake.toFixed(1)}, temperature ${temperature.toFixed(0)} degrees Celsius, and soil moisture ${soilMoisture.toFixed(2)}. Run analysis for a computed model result.`);
     }
 
     async function analyzeNearestBuildingNear(lngLat, label) {
@@ -5763,13 +5935,11 @@ function initVoiceAssistant() {
     function answerCurrentContext(commandText) {
         const lower = String(commandText || "").toLowerCase();
         if (lower.includes("weather") && state.weatherTarget) {
-            const target = state.weatherTarget.name || state.weatherTarget.area || "this area";
-            const current = state.weatherData?.current;
-            if (current) {
-                speakText(`Weather for ${target}: ${Math.round(current.temperature_2m)} degrees Celsius, wind ${Math.round(current.wind_speed_10m)} kilometers per hour.`);
-                return;
-            }
-            speakText(`Weather for ${target} is being loaded.`);
+            speakWeatherSummary();
+            return;
+        }
+        if (/\b(earthquake|quake|seismic|risk|scenario|hazard)\b/.test(lower)) {
+            speakScenarioRiskSummary();
             return;
         }
         speakSequence(getTextSegments("summarize"));
@@ -5932,6 +6102,8 @@ function initVoiceAssistant() {
         bReview = bReview.replace(/WARNING|CRITICAL|SAFE|Routine structural review advised.*/gi, '').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
 
         const isBuildingOpen = bName && bName.toLowerCase() !== "building analysis" && bName.length > 3 && bReview.length > 10;
+        const weatherBrief = buildWeatherVoiceBrief();
+        const scenarioBrief = buildScenarioVoiceBrief();
 
         if (isBuildingOpen) {
             const score = Number.parseFloat(bRisk);
@@ -5943,18 +6115,18 @@ function initVoiceAssistant() {
             const primaryFinding = sentences[0] || "The selected structure has been reviewed using mapped footprint, height, location, and regional exposure.";
             const secondFinding = sentences[1] || "Priority checks should focus on load path continuity, facade condition, drainage, and visible distress.";
             if (mode === 'summarize') {
-                textToRead = `Professional summary for ${bName}. Current assessment is ${riskLabel}${bRisk ? `, with a score of ${bRisk} out of 100` : ""}. ${primaryFinding}. Recommended next step: verify the visible structure, load path, roof drainage, and any signs of cracking or settlement before classifying it as inspection clear.`;
+                textToRead = `Professional summary for ${bName}. Current assessment is ${riskLabel}${bRisk ? `, with a score of ${bRisk} out of 100` : ""}. ${primaryFinding}. ${weatherBrief} ${scenarioBrief} Recommended next step: verify the visible structure, load path, roof drainage, and any signs of cracking or settlement before classifying it as inspection clear.`;
             } else {
-                textToRead = `Full StructureX review for ${bName}. Risk classification is ${riskLabel}${bRisk ? `, score ${bRisk} out of 100` : ""}. ${primaryFinding}. ${secondFinding}. Operational guidance: treat this as a screening result, confirm with field inspection, and prioritize any abnormal geometry, soft-storey behavior, water ingress, or facade distress.`;
+                textToRead = `Full StructureX review for ${bName}. Risk classification is ${riskLabel}${bRisk ? `, score ${bRisk} out of 100` : ""}. ${primaryFinding}. ${secondFinding}. ${weatherBrief} ${scenarioBrief} Operational guidance: treat this as a screening result, confirm with field inspection, and prioritize any abnormal geometry, soft-storey behavior, water ingress, or facade distress.`;
             }
         } else {
             const searchInput = document.querySelector('input[type="text"]');
             const locName = (searchInput && searchInput.value) ? searchInput.value : "the global operational area";
             
             if (mode === 'summarize') {
-                textToRead = `StructureX is monitoring ${locName}. The map, weather context, satellite simulation, and structural review systems are online. To act quickly, say search followed by a city, road, or building name. Say scan or analyze followed by the place name to select the nearest mapped building and run a structural review.`;
+                textToRead = `StructureX is monitoring ${locName}. The map, weather context, satellite simulation, and structural review systems are online. ${weatherBrief} ${scenarioBrief} To act quickly, say search followed by a city, road, or building name. Say scan or analyze followed by the place name to select the nearest mapped building and run a structural review.`;
             } else {
-                textToRead = `StructureX Digital Twin Command Center is active for ${locName}. It can search cities, small towns, roads, landmarks, and building names; keep the 3D map layer active; select the nearest mapped building; and generate a professional screening review. Say, Hey StructureX, scan Race Course Road, or after the first wake phrase simply say stop, search, summarize, or analyze.`;
+                textToRead = `StructureX Digital Twin Command Center is active for ${locName}. It can search cities, small towns, roads, landmarks, and building names; keep the 3D map layer active; select the nearest mapped building; summarize live weather and earthquake scenario risk; and generate a professional screening review. Say, Hey StructureX, scan Race Course Road, or after the first wake phrase simply say stop, search, weather, risk, summarize, or analyze.`;
             }
         }
         
@@ -6175,6 +6347,7 @@ function initVoiceAssistant() {
     } else {
         setVoiceCommandStatus("Voice standby", "No command heard yet");
         updateListenButton();
+        startListeningIfMicrophoneAlreadyAllowed();
     }
 
     // Delegation for inline voice buttons inside the right panel
