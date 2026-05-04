@@ -4121,6 +4121,14 @@ const userProfile = {
     isProfileOpen: false,
 };
 
+function closeUserProfilePanel() {
+    const profilePanel = $('#user-profile-panel');
+    if (profilePanel) {
+        profilePanel.classList.remove('show');
+    }
+    userProfile.isProfileOpen = false;
+}
+
 function initAuth() {
     const userJson = localStorage.getItem('sx_user');
     let user = { email: 'user@structurex.io', name: 'User' };
@@ -4185,10 +4193,21 @@ function initAuth() {
 
         profilePanel.addEventListener('click', (e) => e.stopPropagation());
 
+        document.addEventListener('pointerdown', (e) => {
+            if (!userProfile.isProfileOpen) return;
+            if (profilePanel.contains(e.target) || capsule.contains(e.target)) return;
+            closeUserProfilePanel();
+        }, true);
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && userProfile.isProfileOpen) {
+                closeUserProfilePanel();
+            }
+        });
+
         document.addEventListener('click', () => {
             if (userProfile.isProfileOpen) {
-                profilePanel.classList.remove('show');
-                userProfile.isProfileOpen = false;
+                closeUserProfilePanel();
             }
         });
     }
@@ -4323,10 +4342,123 @@ function trackSearch(query) {
     addActivity('search', `Searched: ${query}`, 'purple');
 }
 
+function readStoredUser() {
+    try {
+        return JSON.parse(localStorage.getItem('sx_user') || '{}');
+    } catch {
+        return {};
+    }
+}
+
+function markdownCell(value) {
+    return String(value ?? 'Not available').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
+}
+
+function readElementText(selector, fallback = 'Not available') {
+    const el = $(selector);
+    const text = el ? el.textContent.trim() : '';
+    return text || fallback;
+}
+
+function readInputValue(selector, fallback = 'Not set') {
+    const el = $(selector);
+    const value = el ? el.value : '';
+    return value || fallback;
+}
+
+function buildSessionReport() {
+    const elapsed = Math.floor((Date.now() - userProfile.sessionStart) / 1000);
+    const user = readStoredUser();
+    const stats = loadUserStats();
+    const reportDate = new Date();
+    const currentLocation = readInputValue('#location-input, #search-input, input[type="text"]');
+    const selectedAsset = readElementText('#det-name, .det-name', 'No asset selected');
+    const riskScore = readElementText('.ai-risk-score, #risk-score', 'Not calculated');
+    const riskLabel = readElementText('.review-status-chip, #risk-label', 'Not calculated');
+    const earthquake = readInputValue('#quake-mag', '3.0');
+    const temperature = readInputValue('#temperature', '25');
+    const soil = readInputValue('#soil-moisture', '0.30');
+    const activities = userProfile.activities.length
+        ? userProfile.activities.map((activity) => (
+            `| ${markdownCell(activity.time.toLocaleTimeString())} | ${markdownCell(activity.message)} |`
+        )).join('\n')
+        : '| Not recorded | No activity recorded for this session |';
+
+    return [
+        '# StructureX Session Report',
+        '',
+        `Generated: ${reportDate.toLocaleString()}`,
+        '',
+        '## Operator',
+        '| Field | Value |',
+        '| --- | --- |',
+        `| Name | ${markdownCell(user.name || 'StructureX User')} |`,
+        `| Email | ${markdownCell(user.email || 'Not available')} |`,
+        '| Role | Operator |',
+        '',
+        '## Live Session',
+        '| Metric | Value |',
+        '| --- | --- |',
+        `| Session Duration | ${markdownCell(formatTime(elapsed))} |`,
+        `| Interactions | ${markdownCell(userProfile.clicks)} |`,
+        `| Buildings Analyzed | ${markdownCell(userProfile.buildingsAnalyzed)} |`,
+        `| Scenarios Run | ${markdownCell(userProfile.scenariosRun)} |`,
+        `| Total Sessions | ${markdownCell(stats.totalSessions || 1)} |`,
+        `| Total Recorded Time | ${markdownCell(formatDuration(stats.totalSeconds || 0))} |`,
+        '',
+        '## Current Workspace',
+        '| Field | Value |',
+        '| --- | --- |',
+        `| Location Search | ${markdownCell(currentLocation)} |`,
+        `| Selected Asset | ${markdownCell(selectedAsset)} |`,
+        `| Risk Score | ${markdownCell(riskScore)} |`,
+        `| Risk Label | ${markdownCell(riskLabel)} |`,
+        `| Earthquake Magnitude | ${markdownCell(earthquake)} |`,
+        `| Temperature | ${markdownCell(temperature)} |`,
+        `| Soil Moisture | ${markdownCell(soil)} |`,
+        '',
+        '## Activity Timeline',
+        '| Time | Event |',
+        '| --- | --- |',
+        activities,
+        '',
+        '## Notes',
+        '- This report is generated from the active browser session and local dashboard state.',
+        '- StructureX is an analytical command center, not an emergency service or certified structural inspection.',
+        '- Use field inspection, engineering drawings, material testing, and professional review before safety-critical decisions.',
+        '',
+    ].join('\n');
+}
+
+function downloadSessionReport() {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const report = buildSessionReport();
+    const blob = new Blob([report], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `structurex-session-report-${timestamp}.md`;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => {
+        link.remove();
+        URL.revokeObjectURL(url);
+    }, 250);
+}
+
 function initProfileActions() {
     // Export Session Report
     const exportBtn = $('#up-export-btn');
     if (exportBtn) {
+        exportBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            downloadSessionReport();
+            addActivity('export', 'Session report exported', 'green');
+            closeUserProfilePanel();
+        }, true);
+
         exportBtn.addEventListener('click', () => {
             const elapsed = Math.floor((Date.now() - userProfile.sessionStart) / 1000);
             const userJson = localStorage.getItem('sx_user');
@@ -4364,6 +4496,7 @@ function initProfileActions() {
             userProfile.activities = [];
             renderActivityList();
             addActivity('login', 'Activity history cleared', 'red');
+            closeUserProfilePanel();
         });
     }
 
@@ -4377,6 +4510,7 @@ function initProfileActions() {
                 ? '<i class="fas fa-moon"></i> Dark Mode'
                 : '<i class="fas fa-palette"></i> Switch Theme';
             addActivity('theme', isLight ? 'Switched to light theme' : 'Switched to dark theme', 'purple');
+            closeUserProfilePanel();
         });
     }
 
@@ -4392,6 +4526,7 @@ function initProfileActions() {
                 document.exitFullscreen();
                 fsBtn.innerHTML = '<i class="fas fa-expand"></i> Fullscreen';
             }
+            closeUserProfilePanel();
         });
     }
 }
@@ -4442,6 +4577,8 @@ function initVoiceAssistant() {
     const waveform = document.getElementById('voice-waveform');
     const pauseBtn = document.getElementById('v-status-pause');
     const stopBtn = document.getElementById('v-status-stop');
+    const voiceWidget = document.getElementById('voice-assistant-widget');
+    const dragHandle = statusPanel ? statusPanel.querySelector('.v-status-top') : null;
     
     let voiceTimer = null;
     let voiceSeconds = 0;
@@ -4450,16 +4587,91 @@ function initVoiceAssistant() {
     let isVoicePaused = false;
     let isNavMenuOpen = false;
 
+    function positionNavVoiceMenu() {
+        if (!navVoiceBtn || !navVoiceMenu) return;
+        const buttonRect = navVoiceBtn.getBoundingClientRect();
+        const gap = 10;
+        const menuWidth = navVoiceMenu.offsetWidth || Math.min(430, window.innerWidth - 24);
+        const menuHeight = navVoiceMenu.offsetHeight || 360;
+        const maxLeft = Math.max(8, window.innerWidth - menuWidth - 8);
+        const maxTop = Math.max(8, window.innerHeight - menuHeight - 8);
+        const left = Math.min(Math.max(8, buttonRect.left + buttonRect.width / 2 - menuWidth / 2), maxLeft);
+        const top = Math.min(Math.max(8, buttonRect.bottom + gap), maxTop);
+        navVoiceMenu.style.left = `${left}px`;
+        navVoiceMenu.style.top = `${top}px`;
+    }
+
+    function openNavVoiceMenu() {
+        if (!navVoiceMenu) return;
+        isNavMenuOpen = true;
+        navVoiceMenu.classList.add('show');
+        requestAnimationFrame(positionNavVoiceMenu);
+    }
+
+    function closeNavVoiceMenu() {
+        if (!navVoiceMenu) return;
+        navVoiceMenu.classList.remove('show');
+        isNavMenuOpen = false;
+    }
+
+    function initVoicePanelDrag() {
+        if (!voiceWidget || !statusPanel || !dragHandle) return;
+        let drag = null;
+
+        const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+        dragHandle.addEventListener('pointerdown', (event) => {
+            if (!statusPanel.classList.contains('active') || event.target.closest('button')) return;
+            const rect = voiceWidget.getBoundingClientRect();
+            drag = {
+                x: event.clientX - rect.left,
+                y: event.clientY - rect.top,
+                pointerId: event.pointerId,
+            };
+            voiceWidget.classList.add('dragging');
+            dragHandle.setPointerCapture(event.pointerId);
+            event.preventDefault();
+        });
+
+        dragHandle.addEventListener('pointermove', (event) => {
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            const panelRect = voiceWidget.getBoundingClientRect();
+            const left = clamp(event.clientX - drag.x, 8, window.innerWidth - panelRect.width - 8);
+            const top = clamp(event.clientY - drag.y, 8, window.innerHeight - panelRect.height - 8);
+            voiceWidget.style.left = `${left}px`;
+            voiceWidget.style.top = `${top}px`;
+            voiceWidget.style.bottom = 'auto';
+            voiceWidget.style.transform = 'none';
+            event.preventDefault();
+        });
+
+        const finishDrag = (event) => {
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            drag = null;
+            voiceWidget.classList.remove('dragging');
+            if (dragHandle.hasPointerCapture(event.pointerId)) {
+                dragHandle.releasePointerCapture(event.pointerId);
+            }
+        };
+
+        dragHandle.addEventListener('pointerup', finishDrag);
+        dragHandle.addEventListener('pointercancel', finishDrag);
+    }
+
+    initVoicePanelDrag();
+
     if (navVoiceBtn) {
         navVoiceBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (isSpeakingSequence) {
                 stopSpeaking();
-                navVoiceMenu.classList.remove('show');
-                isNavMenuOpen = false;
+                closeNavVoiceMenu();
             } else {
-                isNavMenuOpen = !isNavMenuOpen;
-                navVoiceMenu.classList.toggle('show', isNavMenuOpen);
+                if (isNavMenuOpen) {
+                    closeNavVoiceMenu();
+                } else {
+                    openNavVoiceMenu();
+                }
             }
         });
     }
@@ -4474,16 +4686,18 @@ function initVoiceAssistant() {
     // Close menu when clicking anywhere else on the document
     document.addEventListener('click', (e) => {
         if (isNavMenuOpen && !navVoiceBtn.contains(e.target)) {
-            navVoiceMenu.classList.remove('show');
-            isNavMenuOpen = false;
+            closeNavVoiceMenu();
         }
+    });
+
+    window.addEventListener('resize', () => {
+        if (isNavMenuOpen) positionNavVoiceMenu();
     });
 
     if (navReadBtn) {
         navReadBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            navVoiceMenu.classList.remove('show');
-            isNavMenuOpen = false;
+            closeNavVoiceMenu();
             const segments = getTextSegments('full');
             speakSequence(segments);
         });
@@ -4492,8 +4706,7 @@ function initVoiceAssistant() {
     if (navSummarizeBtn) {
         navSummarizeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            navVoiceMenu.classList.remove('show');
-            isNavMenuOpen = false;
+            closeNavVoiceMenu();
             const segments = getTextSegments('summarize');
             speakSequence(segments);
         });
@@ -4501,8 +4714,7 @@ function initVoiceAssistant() {
 
     document.addEventListener('click', () => {
         if (navVoiceMenu) {
-            navVoiceMenu.classList.remove('show');
-            isNavMenuOpen = false;
+            closeNavVoiceMenu();
         }
     });
 

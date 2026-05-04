@@ -217,6 +217,7 @@ body.right-panel-collapsed {
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
 }
 .hdr-left, .hdr-right { display: flex; align-items: center; gap: 12px; }
+.hdr-right { position: relative; }
 .panel-hamburger {
     width: 36px;
     height: 36px;
@@ -2665,6 +2666,7 @@ body[data-risk-level="critical"] #header {
     flex-direction: column;
     align-items: center;
     gap: 16px;
+    touch-action: none;
 }
 
 .voice-btn {
@@ -2804,9 +2806,10 @@ body[data-risk-level="critical"] #header {
 }
 
 .nav-voice-menu {
-    position: absolute;
-    top: calc(var(--header-h, 60px) + 2px);
-    right: 64px; /* Aligned with nav-voice-btn */
+    position: fixed;
+    top: calc(var(--header-h, 60px) + 8px);
+    left: 50%;
+    right: auto;
     z-index: 100000;
     background: rgba(10, 15, 30, 0.95);
     backdrop-filter: blur(20px);
@@ -2816,15 +2819,18 @@ body[data-risk-level="critical"] #header {
     display: none;
     flex-direction: column;
     gap: 4px;
+    width: min(430px, calc(100vw - 24px));
+    max-height: calc(100vh - var(--header-h, 60px) - 24px);
+    overflow-y: auto;
     box-shadow: 0 10px 40px rgba(0,0,0,0.5), 0 0 20px rgba(56, 189, 248, 0.1);
-    transform: translateY(-10px);
+    transform: translateY(-8px) scale(0.98);
     opacity: 0;
     transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .nav-voice-menu.show {
     display: flex;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
     opacity: 1;
 }
 
@@ -2840,7 +2846,7 @@ body[data-risk-level="critical"] #header {
     display: flex;
     align-items: center;
     gap: 10px;
-    width: 160px;
+    width: 100%;
     transition: all 0.2s;
 }
 
@@ -2909,8 +2915,7 @@ body[data-risk-level="critical"] #header {
 @media (max-width: 900px) {
     .nav-voice-menu {
         top: calc(var(--header-h, 52px) + 2px);
-        right: 42px;
-        width: 150px;
+        width: min(360px, calc(100vw - 16px));
     }
     .nav-voice-menu button {
         width: 100%;
@@ -2935,6 +2940,11 @@ body[data-risk-level="critical"] #header {
     transition: all 0.3s ease;
 }
 
+.voice-widget.dragging .voice-status-panel {
+    transition: none;
+    user-select: none;
+}
+
 .voice-status-panel.active {
     display: flex;
     transform: translateY(0);
@@ -2947,6 +2957,13 @@ body[data-risk-level="critical"] #header {
     justify-content: space-between;
     width: 100%;
     margin-bottom: 6px;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+}
+
+.voice-widget.dragging .v-status-top {
+    cursor: grabbing;
 }
 
 .v-status-top > div {
@@ -3007,23 +3024,23 @@ body[data-risk-level="critical"] #header {
     height: 16px;
 }
 
-.v-waveform .bar {
+.v-waveform .v-bar {
     width: 4px;
     background: #38bdf8;
     border-radius: 2px;
     animation: v-wave 1s infinite ease-in-out;
 }
 
-.v-waveform.paused .bar {
+.v-waveform.paused .v-bar {
     animation-play-state: paused;
     height: 4px !important;
 }
 
-.v-waveform .bar:nth-child(1) { height: 8px; animation-delay: 0.1s; }
-.v-waveform .bar:nth-child(2) { height: 16px; animation-delay: 0.2s; }
-.v-waveform .bar:nth-child(3) { height: 10px; animation-delay: 0.3s; }
-.v-waveform .bar:nth-child(4) { height: 14px; animation-delay: 0.4s; }
-.v-waveform .bar:nth-child(5) { height: 6px; animation-delay: 0.5s; }
+.v-waveform .v-bar:nth-child(1) { height: 8px; animation-delay: 0.1s; }
+.v-waveform .v-bar:nth-child(2) { height: 16px; animation-delay: 0.2s; }
+.v-waveform .v-bar:nth-child(3) { height: 10px; animation-delay: 0.3s; }
+.v-waveform .v-bar:nth-child(4) { height: 14px; animation-delay: 0.4s; }
+.v-waveform .v-bar:nth-child(5) { height: 6px; animation-delay: 0.5s; }
 
 @keyframes v-wave {
     0%, 100% { transform: scaleY(0.5); }
@@ -3155,6 +3172,7 @@ body[data-risk-level="critical"] #header {
     width: 360px;
     max-height: calc(100vh - var(--header-h) - 24px);
     overflow-y: auto;
+    overscroll-behavior: contain;
     background: linear-gradient(168deg, rgba(15,23,42,0.96), rgba(8,17,31,0.98));
     backdrop-filter: blur(32px) saturate(1.3);
     -webkit-backdrop-filter: blur(32px) saturate(1.3);
