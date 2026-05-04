@@ -785,6 +785,8 @@ body.right-panel-collapsed .right-toggle {
     padding-right: 2px;
     padding-bottom: 18px;
     scroll-padding-bottom: 18px;
+    scroll-behavior: auto;
+    overscroll-behavior: contain;
 }
 .sat-hero {
     padding: 14px;
@@ -816,6 +818,34 @@ body.right-panel-collapsed .right-toggle {
     grid-template-columns: 1fr;
     gap: 8px;
 }
+.sat-status-guide {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding-top: 2px;
+    font-size: 0.62rem;
+    color: var(--text);
+    line-height: 1.35;
+}
+.sat-status-guide span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 999px;
+    background: rgba(148,163,184,0.05);
+}
+.sat-legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 4px rgba(59,130,246,0.08);
+}
+.sat-legend-dot.nominal { background: #60a5fa; }
+.sat-legend-dot.warning { background: #facc15; box-shadow: 0 0 0 4px rgba(250,204,21,0.08); }
+.sat-legend-dot.critical { background: #ef4444; box-shadow: 0 0 0 4px rgba(239,68,68,0.08); }
 .sat-chart-grid {
     display: grid;
     grid-template-columns: 1fr;
@@ -828,7 +858,7 @@ body.right-panel-collapsed .right-toggle {
     border-radius: var(--radius);
     min-height: 0;
     display: grid;
-    grid-template-rows: auto 180px;
+    grid-template-rows: auto 180px auto;
     gap: 10px;
     background: linear-gradient(180deg, rgba(10, 18, 36, 0.92), rgba(7, 14, 28, 0.86));
     box-shadow: inset 0 0 0 1px rgba(87,227,255,0.08), 0 18px 34px rgba(0,0,0,0.22);
@@ -869,6 +899,16 @@ body.right-panel-collapsed .right-toggle {
 .sat-chart-canvas .svg-container {
     width: 100% !important;
     height: 180px !important;
+}
+.sat-chart-note {
+    margin-top: -2px;
+    padding: 8px 9px;
+    border-radius: 12px;
+    background: rgba(148,163,184,0.05);
+    border: 1px solid rgba(255,255,255,0.07);
+    color: var(--text);
+    font-size: 0.62rem;
+    line-height: 1.45;
 }
 .sat-hero-chip {
     padding: 10px 12px;
@@ -920,7 +960,26 @@ body.right-panel-collapsed .right-toggle {
     place-items: center;
     text-align: center;
     box-shadow: 0 0 0 10px rgba(59,130,246,0.04);
+    z-index: 4;
 }
+.sat-control-node {
+    position: absolute;
+    z-index: 2;
+    padding: 6px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(147,197,253,0.18);
+    background: rgba(8,14,24,0.74);
+    color: #bfdbfe;
+    font-size: 0.58rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    box-shadow: 0 10px 24px rgba(0,0,0,0.2);
+}
+.sat-control-uplink { left: 14px; top: 14px; }
+.sat-control-risk { right: 14px; top: 14px; }
+.sat-control-weather { left: 14px; bottom: 14px; }
+.sat-control-scan { right: 14px; bottom: 14px; }
 .sat-orbit-core-label {
     display: block;
     color: var(--text-bright);
@@ -938,12 +997,14 @@ body.right-panel-collapsed .right-toggle {
 #satellite-radar {
     position: absolute;
     inset: 0;
+    z-index: 3;
 }
 .sat-orbit-node {
     position: absolute;
     width: 16px;
     height: 16px;
     transform: translate(-50%, -50%);
+    z-index: 3;
 }
 .sat-orbit-node::before {
     content: "";
@@ -1052,6 +1113,19 @@ body.right-panel-collapsed .right-toggle {
 .sat-status.critical {
     color: #fecaca;
     background: rgba(239,68,68,0.14);
+}
+.sat-status-note,
+.sat-detail-status-text {
+    padding: 8px 9px;
+    border-radius: 12px;
+    background: rgba(148,163,184,0.05);
+    border: 1px solid rgba(255,255,255,0.06);
+    color: var(--text);
+    font-size: 0.62rem;
+    line-height: 1.45;
+}
+.sat-detail-status-text {
+    margin: -2px 0 12px;
 }
 .sat-item-meta {
     display: grid;

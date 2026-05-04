@@ -28,6 +28,28 @@ const THEME = {
     text: "#c8d6e5",
     muted: "#5a6e84",
 };
+const SATELLITE_STATUS_HELP = {
+    nominal: {
+        label: "Normal",
+        text: "Healthy link, low packet loss, and stable telemetry.",
+    },
+    warning: {
+        label: "Watch",
+        text: "Some delay, packet loss, or anomaly pressure needs attention.",
+    },
+    critical: {
+        label: "Critical",
+        text: "Degraded satellite link. Treat the data stream as urgent.",
+    },
+};
+const TRAFFIC_LANE_LABELS = [
+    "L6 Backup",
+    "L5 User",
+    "L4 Weather",
+    "L3 AI scan",
+    "L2 Sensor",
+    "L1 Command",
+];
 const WEATHER_CODE_LABELS = {
     0: "Clear sky",
     1: "Mainly clear",
@@ -1698,7 +1720,7 @@ function renderSatelliteRadar() {
     node.innerHTML = state.satellites.map((satellite) => `
         <div
             class="sat-orbit-node ${satellite.status}"
-            title="${escapeHtml(satellite.name)}"
+            title="${escapeHtml(`${satellite.name}: ${formatSatelliteStatus(satellite.status)} - ${describeSatelliteStatus(satellite.status)}`)}"
             style="left:${satellite.orbitalSlot.x}%; top:${satellite.orbitalSlot.y}%;"
         ></div>
     `).join("");
@@ -1714,9 +1736,10 @@ function renderSatelliteList() {
         <button class="sat-item ${satellite.id === state.selectedSatelliteId ? "active expanded" : ""}" type="button" data-satellite-id="${satellite.id}">
             <div class="sat-item-head">
                 <span class="sat-item-title">${escapeHtml(satellite.name)}</span>
-                <span class="sat-status ${satellite.status}">${escapeHtml(satellite.status)}</span>
+                <span class="sat-status ${satellite.status}" title="${escapeHtml(describeSatelliteStatus(satellite.status))}">${escapeHtml(formatSatelliteStatus(satellite.status))}</span>
             </div>
             <div class="mini-note">${escapeHtml(satellite.mission)}</div>
+            <div class="sat-status-note">${escapeHtml(describeSatelliteStatus(satellite.status))}</div>
             <div class="sat-item-meta">
                 <div>
                     <span class="sat-item-metric-label">Coverage</span>
@@ -1763,12 +1786,6 @@ function renderSatelliteList() {
         });
     });
 
-    const activeItem = node.querySelector(".sat-item.expanded");
-    if (activeItem) {
-        window.requestAnimationFrame(() => {
-            activeItem.scrollIntoView({ block: "nearest", behavior: "smooth" });
-        });
-    }
 }
 
 function renderSatelliteDetail() {
@@ -1793,8 +1810,9 @@ function renderSatelliteDetail() {
                 <div class="sat-detail-title">${escapeHtml(satellite.name)}</div>
                 <div class="sat-detail-sub">${escapeHtml(satellite.orbitClass)} · ${escapeHtml(satellite.mission)}</div>
             </div>
-            <span class="sat-status ${satellite.status}">${escapeHtml(satellite.status)}</span>
+            <span class="sat-status ${satellite.status}" title="${escapeHtml(describeSatelliteStatus(satellite.status))}">${escapeHtml(formatSatelliteStatus(satellite.status))}</span>
         </div>
+        <div class="sat-detail-status-text">${escapeHtml(describeSatelliteStatus(satellite.status))}</div>
         <div class="sat-detail-grid">
             ${renderSatelliteDetailCard("Beam target", satellite.beamTarget)}
             ${renderSatelliteDetailCard("Health", `${satellite.healthPct.toFixed(1)}%`)}
@@ -2008,7 +2026,7 @@ function renderTrafficFlowChart(labels, trafficFlow) {
                 type: "heatmap",
                 z: heatmap,
                 x: recent.map((_, index) => index + 1),
-                y: ["L6", "L5", "L4", "L3", "L2", "L1"],
+                y: TRAFFIC_LANE_LABELS,
                 xaxis: "x",
                 yaxis: "y",
                 colorscale: [
@@ -2016,11 +2034,11 @@ function renderTrafficFlowChart(labels, trafficFlow) {
                     [0.18, "#3550d8"],
                     [0.38, "#3fc5ff"],
                     [0.58, "#7df0c8"],
-                    [0.78, "#ff8b5e"],
+                    [0.78, "#facc15"],
                     [1, "#ef4444"],
                 ],
                 showscale: false,
-                hovertemplate: "Traffic intensity: %{z:.1f}<extra></extra>",
+                hovertemplate: "%{y}<br>Traffic intensity: %{z:.1f}<extra></extra>",
             },
             {
                 type: "bar",
@@ -2068,7 +2086,7 @@ function renderTrafficFlowChart(labels, trafficFlow) {
                 domain: [0.46, 1],
                 showgrid: false,
                 zeroline: false,
-                tickfont: { size: 8, color: "#94a3b8" },
+                tickfont: { size: 8, color: "#cbd5e1" },
                 fixedrange: true,
             },
             xaxis2: {
@@ -2150,6 +2168,14 @@ function buildTelemetryChartLayout({ yaxisTitle, range, transitionMs = 600, anno
         annotations,
         shapes,
     };
+}
+
+function formatSatelliteStatus(status) {
+    return SATELLITE_STATUS_HELP[status]?.label || "Unknown";
+}
+
+function describeSatelliteStatus(status) {
+    return SATELLITE_STATUS_HELP[status]?.text || "Telemetry status is not available.";
 }
 
 function renderSatelliteDetailCard(label, value) {
