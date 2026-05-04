@@ -50,6 +50,65 @@ const TRAFFIC_LANE_LABELS = [
     "L2 Sensor",
     "L1 Command",
 ];
+const SELECTED_BUILDING_COLOR = "#4f8cff";
+const GEOCODER_TYPES = [
+    "country",
+    "region",
+    "subregion",
+    "county",
+    "municipality",
+    "municipal_district",
+    "locality",
+    "neighbourhood",
+    "place",
+    "postal_code",
+    "address",
+    "poi",
+].join(",");
+const INDIA_ADMIN_AREAS = [
+    ["Andhra Pradesh", "State of India", 80.9462, 15.9129],
+    ["Arunachal Pradesh", "State of India", 94.7278, 28.2180],
+    ["Assam", "State of India", 92.9376, 26.2006],
+    ["Bihar", "State of India", 85.3131, 25.0961],
+    ["Chhattisgarh", "State of India", 81.8661, 21.2787],
+    ["Goa", "State of India", 74.1240, 15.2993],
+    ["Gujarat", "State of India", 71.1924, 22.2587],
+    ["Haryana", "State of India", 76.0856, 29.0588],
+    ["Himachal Pradesh", "State of India", 77.1734, 31.1048],
+    ["Jharkhand", "State of India", 85.2799, 23.6102],
+    ["Karnataka", "State of India", 75.7139, 15.3173],
+    ["Kerala", "State of India", 76.2711, 10.8505],
+    ["Madhya Pradesh", "State of India", 78.6569, 22.9734],
+    ["Maharashtra", "State of India", 75.7139, 19.7515],
+    ["Manipur", "State of India", 93.9063, 24.6637],
+    ["Meghalaya", "State of India", 91.3662, 25.4670],
+    ["Mizoram", "State of India", 92.9376, 23.1645],
+    ["Nagaland", "State of India", 94.5624, 26.1584],
+    ["Odisha", "State of India", 85.0985, 20.9517],
+    ["Punjab", "State of India", 75.3412, 31.1471],
+    ["Rajasthan", "State of India", 74.2179, 27.0238],
+    ["Sikkim", "State of India", 88.5122, 27.5330],
+    ["Tamil Nadu", "State of India", 78.6569, 11.1271],
+    ["Telangana", "State of India", 79.0193, 18.1124],
+    ["Tripura", "State of India", 91.9882, 23.9408],
+    ["Uttar Pradesh", "State of India", 80.9462, 26.8467],
+    ["Uttarakhand", "State of India", 79.0193, 30.0668],
+    ["West Bengal", "State of India", 87.8550, 22.9868],
+    ["Delhi", "National capital territory", 77.1025, 28.7041],
+    ["Jammu and Kashmir", "Union territory of India", 76.5762, 33.7782],
+    ["Ladakh", "Union territory of India", 77.5619, 34.2268],
+    ["Puducherry", "Union territory of India", 79.8083, 11.9416],
+    ["Chandigarh", "Union territory of India", 76.7794, 30.7333],
+    ["Andaman and Nicobar Islands", "Union territory of India", 92.6586, 11.7401],
+    ["Lakshadweep", "Union territory of India", 72.1833, 10.5667],
+    ["Dadra and Nagar Haveli and Daman and Diu", "Union territory of India", 72.8328, 20.3974],
+].map(([text, type, lng, lat]) => ({
+    id: `india-admin-${String(text).toLowerCase().replaceAll(" ", "-")}`,
+    text,
+    place_name: `${text}, ${type}`,
+    center: [lng, lat],
+    properties: { source: "India admin", class: "administrative", type },
+}));
 const WEATHER_CODE_LABELS = {
     0: "Clear sky",
     1: "Mainly clear",
@@ -308,6 +367,9 @@ const state = {
     buildingInteractionBound: false,
     buildingSourceName: null,
     buildingSourceLayer: "building",
+    selectedBuildingFeatureIds: [],
+    userLocation: null,
+    locationPromptVisible: false,
     weatherTarget: null,
     weatherData: null,
     weatherLoading: false,
@@ -392,6 +454,7 @@ function init() {
     initSatelliteTelemetry();
     initWeatherPanel();
     initPlaceSearch();
+    initUserLocationPrompt();
     initAIMode();
     initAlert();
     initDetailPanel();
@@ -621,16 +684,7 @@ function add3DBuildings() {
                 paint: {
                     "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
                     "fill-extrusion-height": ["coalesce", ["get", "render_height"], 12],
-                    "fill-extrusion-color": [
-                        "interpolate",
-                        ["linear"],
-                        ["coalesce", ["get", "render_height"], 12],
-                        0, "#081a30",
-                        20, "#0d2740",
-                        60, "#103558",
-                        120, "#16486d",
-                        220, "#1c5f8d",
-                    ],
+                    "fill-extrusion-color": getDefaultBuildingColorExpression(),
                     "fill-extrusion-opacity": 0.88,
                 },
             },
@@ -664,13 +718,24 @@ function add3DBuildings() {
             {
                 id: "3d-buildings-highlight-fallback",
                 source: "building-highlight-src",
-                type: "fill-extrusion",
+                type: "fill",
                 paint: {
-                    "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
-                    "fill-extrusion-height": ["+", ["coalesce", ["get", "render_height"], 12], 0.8],
-                    "fill-extrusion-color": "#3b82f6",
-                    "fill-extrusion-opacity": 0.9,
-                    "fill-extrusion-vertical-gradient": false,
+                    "fill-color": SELECTED_BUILDING_COLOR,
+                    "fill-opacity": 0.38,
+                },
+            },
+            labelLayerId
+        );
+
+        state.map.addLayer(
+            {
+                id: "building-highlight-outline",
+                source: "building-highlight-src",
+                type: "line",
+                paint: {
+                    "line-color": "#93c5fd",
+                    "line-width": 2,
+                    "line-opacity": 0.95,
                 },
             },
             labelLayerId
@@ -698,7 +763,7 @@ function initBuildingInteraction() {
     state.map.on("click", "3d-buildings", (event) => {
         const feature = event.features?.[0];
         if (feature) {
-            analyzeBuilding(feature, event.lngLat);
+            analyzeBuilding(feature, event.lngLat, event.point);
         }
     });
 
@@ -710,7 +775,7 @@ function initBuildingInteraction() {
     });
 }
 
-async function analyzeBuilding(feature, lngLat) {
+async function analyzeBuilding(feature, lngLat, point = null) {
     if (!lngLat) {
         return;
     }
@@ -720,7 +785,7 @@ async function analyzeBuilding(feature, lngLat) {
     const requestId = state.activeBuildingRequestId;
     state.selectedBuildingKey = selectionKey;
 
-    highlightBuilding(feature, lngLat);
+    highlightBuilding(feature, lngLat, point);
     state.selectedBuilding = { feature, lngLat, key: selectionKey };
     centerOnCoordinates([lngLat.lng, lngLat.lat], 17.2);
     openBuildingPanelLoading(lngLat);
@@ -786,14 +851,15 @@ async function analyzeBuilding(feature, lngLat) {
     }
 }
 
-function highlightBuilding(feature, lngLat) {
+function highlightBuilding(feature, lngLat, point = null) {
     if (!state.map) {
         return;
     }
 
-    const featureId = getBuildingFeatureId(feature);
-    if (featureId !== null && state.map.getLayer("3d-buildings-highlight")) {
-        state.map.setFilter("3d-buildings-highlight", getBuildingHighlightFilter(featureId));
+    const cluster = collectSelectedBuildingParts(feature, point);
+    if (cluster.ids.length) {
+        applyBuildingHighlightIds(cluster.ids);
+        state.selectedBuildingFeatureIds = cluster.ids;
         clearFallbackBuildingHighlight();
         if (lngLat) {
             addOrMoveMarker([lngLat.lng, lngLat.lat], { mode: "selected scanning" });
@@ -820,9 +886,7 @@ function highlightBuilding(feature, lngLat) {
         }
     }
 
-    if (state.map.getLayer("3d-buildings-highlight")) {
-        state.map.setFilter("3d-buildings-highlight", getEmptyBuildingHighlightFilter());
-    }
+    resetBuildingPaintHighlight();
 
     state.map.getSource("building-highlight-src")?.setData({
         type: "FeatureCollection",
@@ -844,6 +908,97 @@ function highlightBuilding(feature, lngLat) {
     }
 }
 
+function collectSelectedBuildingParts(feature, point) {
+    const clickedId = getBuildingFeatureId(feature);
+    const candidates = getRenderedBuildingCandidates(feature, point);
+    const cluster = expandBuildingCluster(feature, candidates, point);
+    const ids = uniqueValues(cluster.map(getBuildingFeatureId).filter((id) => id !== null));
+
+    if (!ids.length && clickedId !== null) {
+        ids.push(clickedId);
+    }
+
+    return {
+        features: cluster,
+        ids,
+    };
+}
+
+function getRenderedBuildingCandidates(feature, point) {
+    const items = [feature].filter(Boolean);
+    if (!state.map || !point || !state.map.getLayer("3d-buildings")) {
+        return items;
+    }
+
+    const radius = Math.max(150, Math.min(360, Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.34)));
+    const box = [
+        [point.x - radius, point.y - radius],
+        [point.x + radius, point.y + radius],
+    ];
+
+    try {
+        items.push(...state.map.queryRenderedFeatures(box, { layers: ["3d-buildings"] }));
+    } catch (error) {
+        console.warn("Building cluster query failed", error);
+    }
+
+    return dedupeFeatures(items);
+}
+
+function expandBuildingCluster(seedFeature, candidates, point) {
+    const seedId = getBuildingFeatureId(seedFeature);
+    const seedKeys = getBuildingGroupKeys(seedFeature);
+    const seedBounds = featureScreenBounds(seedFeature) || pointBounds(point);
+    const seedHeight = getFeatureHeight(seedFeature);
+    const cluster = [];
+    const pending = [];
+
+    candidates.forEach((candidate) => {
+        if (!candidate) {
+            return;
+        }
+        const candidateId = getBuildingFeatureId(candidate);
+        if (seedId !== null && candidateId === seedId) {
+            cluster.push(candidate);
+            return;
+        }
+        if (sharesAnyValue(seedKeys, getBuildingGroupKeys(candidate))) {
+            cluster.push(candidate);
+            return;
+        }
+        pending.push(candidate);
+    });
+
+    if (!cluster.length) {
+        cluster.push(seedFeature);
+    }
+
+    let clusterBounds = mergeBounds(cluster.map((item) => featureScreenBounds(item)).filter(Boolean)) || seedBounds;
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (let index = pending.length - 1; index >= 0; index -= 1) {
+            const candidate = pending[index];
+            const candidateBounds = featureScreenBounds(candidate);
+            if (!candidateBounds) {
+                continue;
+            }
+            if (
+                heightCompatible(seedHeight, getFeatureHeight(candidate)) &&
+                boundsIntersect(expandBounds(clusterBounds, 34), candidateBounds) &&
+                boundsDistance(seedBounds, candidateBounds) <= 210
+            ) {
+                cluster.push(candidate);
+                pending.splice(index, 1);
+                clusterBounds = mergeBounds([clusterBounds, candidateBounds]);
+                changed = true;
+            }
+        }
+    }
+
+    return dedupeFeatures(cluster);
+}
+
 function getBuildingFeatureId(feature) {
     const id = feature?.id;
     if (id === undefined || id === null || id === "") {
@@ -860,15 +1015,193 @@ function getBuildingHighlightFilter(featureId) {
     return ["all", ["!", ["has", "hide_3d"]], ["==", ["id"], featureId]];
 }
 
+function getDefaultBuildingColorExpression() {
+    return [
+        "interpolate",
+        ["linear"],
+        ["coalesce", ["get", "render_height"], 12],
+        0, "#081a30",
+        20, "#0d2740",
+        60, "#103558",
+        120, "#16486d",
+        220, "#1c5f8d",
+    ];
+}
+
+function applyBuildingHighlightIds(ids) {
+    if (!state.map?.getLayer("3d-buildings")) {
+        return;
+    }
+
+    const matchSelected = ["match", ["id"], ids, true, false];
+    state.map.setPaintProperty("3d-buildings", "fill-extrusion-color", [
+        "case",
+        matchSelected,
+        SELECTED_BUILDING_COLOR,
+        getDefaultBuildingColorExpression(),
+    ]);
+    state.map.setPaintProperty("3d-buildings", "fill-extrusion-opacity", [
+        "case",
+        matchSelected,
+        0.98,
+        0.72,
+    ]);
+    if (state.map.getLayer("3d-buildings-highlight")) {
+        state.map.setFilter("3d-buildings-highlight", getEmptyBuildingHighlightFilter());
+    }
+}
+
+function resetBuildingPaintHighlight() {
+    state.selectedBuildingFeatureIds = [];
+    if (!state.map?.getLayer("3d-buildings")) {
+        return;
+    }
+    state.map.setPaintProperty("3d-buildings", "fill-extrusion-color", getDefaultBuildingColorExpression());
+    state.map.setPaintProperty("3d-buildings", "fill-extrusion-opacity", 0.88);
+    if (state.map.getLayer("3d-buildings-highlight")) {
+        state.map.setFilter("3d-buildings-highlight", getEmptyBuildingHighlightFilter());
+    }
+}
+
 function clearFallbackBuildingHighlight() {
     state.map?.getSource("building-highlight-src")?.setData({ type: "FeatureCollection", features: [] });
 }
 
 function clearBuildingHighlight() {
-    if (state.map?.getLayer("3d-buildings-highlight")) {
-        state.map.setFilter("3d-buildings-highlight", getEmptyBuildingHighlightFilter());
-    }
+    resetBuildingPaintHighlight();
     clearFallbackBuildingHighlight();
+}
+
+function dedupeFeatures(features) {
+    const seen = new Set();
+    const output = [];
+    features.forEach((feature, index) => {
+        if (!feature) {
+            return;
+        }
+        const id = getBuildingFeatureId(feature);
+        const key = id !== null
+            ? `id:${id}`
+            : `geom:${index}:${JSON.stringify(feature.geometry?.coordinates?.[0]?.[0] || feature.geometry?.coordinates?.[0] || [])}`;
+        if (seen.has(key)) {
+            return;
+        }
+        seen.add(key);
+        output.push(feature);
+    });
+    return output;
+}
+
+function getBuildingGroupKeys(feature) {
+    const props = feature?.properties || {};
+    return [
+        props.osm_id,
+        props.osm_way_id,
+        props.osm_relation_id,
+        props.way_id,
+        props.relation_id,
+        props.name,
+        props["name:en"],
+        props["addr:housenumber"] && props["addr:street"]
+            ? `${props["addr:housenumber"]} ${props["addr:street"]}`
+            : null,
+    ]
+        .filter((value) => value !== undefined && value !== null && String(value).trim())
+        .map((value) => String(value).toLowerCase());
+}
+
+function getFeatureHeight(feature) {
+    return Number(feature?.properties?.render_height || feature?.properties?.height || 12);
+}
+
+function heightCompatible(a, b) {
+    if (!Number.isFinite(a) || !Number.isFinite(b)) {
+        return true;
+    }
+    return Math.abs(a - b) <= Math.max(22, Math.max(a, b) * 0.85);
+}
+
+function sharesAnyValue(a, b) {
+    if (!a.length || !b.length) {
+        return false;
+    }
+    const set = new Set(a);
+    return b.some((value) => set.has(value));
+}
+
+function pointBounds(point) {
+    if (!point) {
+        return null;
+    }
+    return { minX: point.x, minY: point.y, maxX: point.x, maxY: point.y };
+}
+
+function featureScreenBounds(feature) {
+    const coords = [];
+    collectGeometryCoordinates(feature?.geometry, coords);
+    if (!coords.length || !state.map) {
+        return null;
+    }
+
+    return coords.reduce((bounds, coord) => {
+        const projected = state.map.project(coord);
+        return {
+            minX: Math.min(bounds.minX, projected.x),
+            minY: Math.min(bounds.minY, projected.y),
+            maxX: Math.max(bounds.maxX, projected.x),
+            maxY: Math.max(bounds.maxY, projected.y),
+        };
+    }, { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+}
+
+function collectGeometryCoordinates(geometry, output) {
+    if (!geometry) {
+        return;
+    }
+    if (geometry.type === "Polygon") {
+        geometry.coordinates?.forEach((ring) => ring.forEach((coord) => output.push(coord)));
+        return;
+    }
+    if (geometry.type === "MultiPolygon") {
+        geometry.coordinates?.forEach((polygon) =>
+            polygon.forEach((ring) => ring.forEach((coord) => output.push(coord)))
+        );
+    }
+}
+
+function expandBounds(bounds, amount) {
+    return {
+        minX: bounds.minX - amount,
+        minY: bounds.minY - amount,
+        maxX: bounds.maxX + amount,
+        maxY: bounds.maxY + amount,
+    };
+}
+
+function mergeBounds(boundsList) {
+    if (!boundsList.length) {
+        return null;
+    }
+    return boundsList.reduce((merged, bounds) => ({
+        minX: Math.min(merged.minX, bounds.minX),
+        minY: Math.min(merged.minY, bounds.minY),
+        maxX: Math.max(merged.maxX, bounds.maxX),
+        maxY: Math.max(merged.maxY, bounds.maxY),
+    }));
+}
+
+function boundsIntersect(a, b) {
+    return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
+}
+
+function boundsDistance(a, b) {
+    const dx = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
+    const dy = Math.max(0, Math.max(a.minY - b.maxY, b.minY - a.maxY));
+    return Math.hypot(dx, dy);
+}
+
+function uniqueValues(values) {
+    return Array.from(new Set(values));
 }
 
 /** Ray-casting point-in-polygon: returns the polygon ring-set that contains (px, py), or null */
@@ -1206,6 +1539,7 @@ function initPlaceSearch() {
     const input = $("#place-search");
     const dropdown = $("#search-results");
     const form = $("#place-search-form");
+    const locateButton = $("#use-location-btn");
     if (!input || !dropdown) {
         return;
     }
@@ -1226,11 +1560,11 @@ function initPlaceSearch() {
         if (query.length < 2) {
             dropdown.style.display = "none";
             dropdown.innerHTML = "";
-            $("#search-meta").textContent = "Search any city, address, landmark, district, or country.";
+            $("#search-meta").textContent = "Search any city, village, address, landmark, district, state, PIN code, or country.";
             return;
         }
 
-        $("#search-meta").textContent = "Searching worldwide map data...";
+        $("#search-meta").textContent = "Searching global and India map data...";
         state.geocodeTimer = setTimeout(() => runPlaceSearch(query), 250);
     });
 
@@ -1274,6 +1608,10 @@ function initPlaceSearch() {
             dropdown.style.display = "none";
         }
     });
+
+    locateButton?.addEventListener("click", () => {
+        requestUserLocation({ source: "search-button" });
+    });
 }
 
 async function runPlaceSearch(query, options = {}) {
@@ -1281,64 +1619,36 @@ async function runPlaceSearch(query, options = {}) {
     const meta = $("#search-meta");
 
     try {
-        // Step 1: MapTiler Geocoding (Primary, Fast)
-        try {
-            const mtResponse = await fetch(
-                `https://api.maptiler.com/geocoding/${encodeURIComponent(query)}.json?key=${DEFAULT_MAP_KEY}&limit=8&types=poi,address,place&autocomplete=true&fuzzyMatch=true`
-            );
-            if (mtResponse.ok) {
-                const mtPayload = await mtResponse.json();
-                features = mtPayload.features || [];
-            } else {
-                console.warn(`MapTiler search returned ${mtResponse.status}`);
+        let features = [];
+        const searchQueries = buildSearchQueries(query);
+
+        for (const searchQuery of searchQueries) {
+            const mapTilerFeatures = await fetchMapTilerPlaces(searchQuery);
+            mapTilerFeatures.forEach((feature) => addSearchFeature(features, feature));
+            if (features.length >= 12) {
+                break;
             }
-        } catch (e) {
-            console.warn("MapTiler fetch failed, relying on Nominatim", e);
         }
 
-        // Step 2: Nominatim fallback (Deep Scan for Monuments/Architecture)
-        // If query looks like a specific building or if MapTiler results are low
-        if (features.length < 3 || query.length > 5) {
-            try {
-                const nomResponse = await fetch(
-                    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&addressdetails=1`
-                );
-                if (nomResponse.ok) {
-                    const nomData = await nomResponse.json();
-                    const nomFeatures = nomData.map(node => ({
-                        id: `nom-${node.place_id}`,
-                        text: node.display_name.split(",")[0],
-                        place_name: node.display_name,
-                        center: [parseFloat(node.lon), parseFloat(node.lat)],
-                        bbox: node.boundingbox ? [parseFloat(node.boundingbox[2]), parseFloat(node.boundingbox[0]), parseFloat(node.boundingbox[3]), parseFloat(node.boundingbox[1])] : null,
-                        properties: {
-                            type: node.type,
-                            class: node.class,
-                            osm_type: node.osm_type,
-                            source: "OpenStreetMap"
-                        }
-                    }));
-                    
-                    // Merge and deduplicate (roughly by coordinates)
-                    nomFeatures.forEach(nom => {
-                        const exists = features.some(f => 
-                            Math.abs(f.center[0] - nom.center[0]) < 0.001 && 
-                            Math.abs(f.center[1] - nom.center[1]) < 0.001
-                        );
-                        if (!exists) features.push(nom);
-                    });
+        if (features.length < 12) {
+            for (const searchQuery of searchQueries) {
+                const osmFeatures = await fetchOpenStreetMapPlaces(searchQuery);
+                osmFeatures.forEach((feature) => addSearchFeature(features, feature));
+                if (features.length >= 16) {
+                    break;
                 }
-            } catch (e) {
-                console.warn("Nominatim fallback failed", e);
             }
         }
+
+        getIndiaAdminMatches(query).forEach((feature) => addSearchFeature(features, feature));
+        features = rankSearchFeatures(features, query).slice(0, 16);
 
         state.latestSearchResults = features;
 
         if (!features.length) {
-            dropdown.innerHTML = `<div class="search-result-empty">No matching places or monuments found.</div>`;
+            dropdown.innerHTML = `<div class="search-result-empty">No matching city, village, state, district, landmark, or PIN code found.</div>`;
             dropdown.style.display = "block";
-            meta.textContent = "Try searching for specific architectural names like 'Eiffel Tower' or 'Taj Mahal'.";
+            meta.textContent = "Try adding district, state, or India after the place name.";
             return;
         }
 
@@ -1351,7 +1661,9 @@ async function runPlaceSearch(query, options = {}) {
         dropdown.innerHTML = features
             .map((feature, index) => {
                 const iconClass = getFeatureIcon(feature);
-                const sourceTag = feature.properties?.source === "OpenStreetMap" ? '<span class="source-tag">OSM</span>' : "";
+                const sourceTag = feature.properties?.source
+                    ? `<span class="source-tag">${escapeHtml(feature.properties.source)}</span>`
+                    : "";
                 return `
                     <button class="search-result-item" type="button"
                         data-index="${index}"
@@ -1371,7 +1683,7 @@ async function runPlaceSearch(query, options = {}) {
             })
             .join("");
         dropdown.style.display = "block";
-        meta.textContent = `${features.length} structural & location matches found worldwide.`;
+        meta.textContent = `${features.length} matches found across cities, villages, districts, states, landmarks, and addresses.`;
 
         $$(".search-result-item").forEach((button) => {
             button.addEventListener("click", () => {
@@ -1388,6 +1700,142 @@ async function runPlaceSearch(query, options = {}) {
     }
 }
 
+function buildSearchQueries(query) {
+    const clean = query.trim();
+    const lower = clean.toLowerCase();
+    const queries = [clean];
+    if (!lower.includes("india") && !lower.includes("bharat")) {
+        queries.push(`${clean}, India`);
+    }
+    return uniqueValues(queries);
+}
+
+async function fetchMapTilerPlaces(query) {
+    try {
+        const params = new URLSearchParams({
+            key: DEFAULT_MAP_KEY,
+            limit: "10",
+            types: GEOCODER_TYPES,
+            autocomplete: "true",
+            fuzzyMatch: "true",
+            language: "en",
+        });
+        if (state.userLocation) {
+            params.set("proximity", `${state.userLocation.lng},${state.userLocation.lat}`);
+        }
+        const response = await fetch(`https://api.maptiler.com/geocoding/${encodeURIComponent(query)}.json?${params.toString()}`);
+        if (!response.ok) {
+            console.warn(`MapTiler search returned ${response.status}`);
+            return [];
+        }
+        const payload = await response.json();
+        return (payload.features || []).map((feature) => ({
+            ...feature,
+            properties: {
+                ...(feature.properties || {}),
+                source: "MapTiler",
+            },
+        }));
+    } catch (error) {
+        console.warn("MapTiler search failed", error);
+        return [];
+    }
+}
+
+async function fetchOpenStreetMapPlaces(query) {
+    try {
+        const params = new URLSearchParams({
+            q: query,
+            format: "jsonv2",
+            limit: "10",
+            addressdetails: "1",
+            extratags: "1",
+            namedetails: "1",
+            "accept-language": "en",
+        });
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`);
+        if (!response.ok) {
+            return [];
+        }
+        const data = await response.json();
+        return data
+            .filter((node) => Number.isFinite(Number(node.lon)) && Number.isFinite(Number(node.lat)))
+            .map((node) => ({
+                id: `nom-${node.place_id}`,
+                text: node.name || node.display_name.split(",")[0],
+                place_name: node.display_name,
+                center: [Number(node.lon), Number(node.lat)],
+                bbox: node.boundingbox
+                    ? [Number(node.boundingbox[2]), Number(node.boundingbox[0]), Number(node.boundingbox[3]), Number(node.boundingbox[1])]
+                    : null,
+                properties: {
+                    type: node.type,
+                    class: node.class,
+                    osm_type: node.osm_type,
+                    source: "OSM",
+                },
+            }));
+    } catch (error) {
+        console.warn("OpenStreetMap search failed", error);
+        return [];
+    }
+}
+
+function getIndiaAdminMatches(query) {
+    const clean = normalizeSearchText(query);
+    if (clean.length < 2) {
+        return [];
+    }
+    return INDIA_ADMIN_AREAS.filter((feature) => {
+        const name = normalizeSearchText(feature.text);
+        const full = normalizeSearchText(feature.place_name);
+        return name.includes(clean) || clean.includes(name) || full.includes(clean);
+    });
+}
+
+function addSearchFeature(features, feature) {
+    if (!feature?.center || !Number.isFinite(Number(feature.center[0])) || !Number.isFinite(Number(feature.center[1]))) {
+        return;
+    }
+
+    const key = `${normalizeSearchText(feature.text || feature.place_name)}:${Number(feature.center[0]).toFixed(4)}:${Number(feature.center[1]).toFixed(4)}`;
+    const exists = features.some((item) => {
+        const itemKey = `${normalizeSearchText(item.text || item.place_name)}:${Number(item.center[0]).toFixed(4)}:${Number(item.center[1]).toFixed(4)}`;
+        const close = Math.abs(item.center[0] - feature.center[0]) < 0.0008 && Math.abs(item.center[1] - feature.center[1]) < 0.0008;
+        return itemKey === key || close;
+    });
+    if (!exists) {
+        features.push(feature);
+    }
+}
+
+function rankSearchFeatures(features, query) {
+    const clean = normalizeSearchText(query);
+    return [...features].sort((a, b) => searchFeatureScore(b, clean) - searchFeatureScore(a, clean));
+}
+
+function searchFeatureScore(feature, cleanQuery) {
+    const text = normalizeSearchText(feature.text || "");
+    const full = normalizeSearchText(feature.place_name || "");
+    const source = feature.properties?.source || "";
+    let score = 0;
+    if (text === cleanQuery) score += 80;
+    if (text.startsWith(cleanQuery)) score += 35;
+    if (full.includes(cleanQuery)) score += 20;
+    if (full.includes("india")) score += 10;
+    if (source === "India admin") score += 18;
+    if (source === "MapTiler") score += 8;
+    if ((feature.properties?.class || "").includes("boundary")) score += 8;
+    return score;
+}
+
+function normalizeSearchText(value) {
+    return String(value || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+}
+
 function getFeatureIcon(feature) {
     const cls = (feature.properties?.class || feature.properties?.type || "").toLowerCase();
     const txt = (feature.text || feature.place_name || "").toLowerCase();
@@ -1400,6 +1848,7 @@ function getFeatureIcon(feature) {
     if (cls.includes("bridge")) return "fa-bridge";
     if (cls.includes("industrial") || cls.includes("factory")) return "fa-industry";
     if (cls.includes("office") || cls.includes("commercial")) return "fa-building";
+    if (cls.includes("administrative") || txt.includes("state of india") || txt.includes("union territory")) return "fa-map";
     if (cls.includes("place") || cls.includes("city") || cls.includes("town")) return "fa-city";
     
     return "fa-location-crosshairs";
@@ -1469,6 +1918,107 @@ function selectPlaceResult(feature) {
         }, 1500);
     }
 
+    runResilienceAnalysis({ silent: true });
+}
+
+function initUserLocationPrompt() {
+    const prompt = $("#location-consent");
+    const allow = $("#location-allow");
+    const skip = $("#location-skip");
+
+    allow?.addEventListener("click", () => requestUserLocation({ source: "startup-prompt" }));
+    skip?.addEventListener("click", () => hideLocationPrompt());
+
+    if (!navigator.geolocation || !prompt || sessionStorage.getItem("sx-location-suggested") === "1") {
+        return;
+    }
+
+    window.setTimeout(() => {
+        if (!state.userLocation) {
+            showLocationPrompt();
+        }
+    }, 1200);
+}
+
+function showLocationPrompt() {
+    const prompt = $("#location-consent");
+    if (!prompt) {
+        return;
+    }
+    state.locationPromptVisible = true;
+    sessionStorage.setItem("sx-location-suggested", "1");
+    prompt.hidden = false;
+    prompt.classList.add("show");
+}
+
+function hideLocationPrompt() {
+    const prompt = $("#location-consent");
+    if (!prompt) {
+        return;
+    }
+    state.locationPromptVisible = false;
+    prompt.classList.remove("show");
+    window.setTimeout(() => {
+        prompt.hidden = true;
+    }, 180);
+}
+
+function requestUserLocation({ source = "manual" } = {}) {
+    if (!navigator.geolocation) {
+        $("#search-meta").textContent = "Your browser does not support live location detection.";
+        hideLocationPrompt();
+        return;
+    }
+
+    $("#search-meta").textContent = "Waiting for browser location permission...";
+    navigator.geolocation.getCurrentPosition(
+        (position) => applyUserLocation(position, source),
+        (error) => {
+            console.warn("Location permission failed", error);
+            $("#search-meta").textContent = "Location permission was not enabled. You can still search any place manually.";
+            hideLocationPrompt();
+        },
+        {
+            enableHighAccuracy: true,
+            timeout: 12000,
+            maximumAge: 60000,
+        }
+    );
+}
+
+async function applyUserLocation(position, source) {
+    const lat = Number(position.coords.latitude);
+    const lng = Number(position.coords.longitude);
+    const accuracy = Math.round(position.coords.accuracy || 0);
+    state.userLocation = { lat, lng, accuracy };
+
+    const locationMeta = await reverseGeocode(lng, lat);
+    const exactLabel = `${locationMeta.address} (${lat.toFixed(5)}, ${lng.toFixed(5)})`;
+    $("#place-search").value = locationMeta.label || "My current location";
+    $("#search-meta").textContent = `Current location: ${exactLabel}${accuracy ? `, accuracy about ${accuracy}m` : ""}.`;
+
+    setWeatherTarget({
+        name: locationMeta.label || "My current location",
+        address: locationMeta.address || exactLabel,
+        area: locationMeta.area || "Current area",
+        lat,
+        lng,
+        source: source === "startup-prompt" ? "Browser location prompt" : "Browser location",
+    });
+
+    const applyMapTarget = () => {
+        centerOnCoordinates([lng, lat], 16.8);
+        addOrMoveMarker([lng, lat], { mode: "selected" });
+    };
+
+    if (state.mapReady) {
+        applyMapTarget();
+    } else if (state.map) {
+        state.map.once("load", applyMapTarget);
+    }
+
+    setSystemStatus("Current location linked");
+    hideLocationPrompt();
     runResilienceAnalysis({ silent: true });
 }
 

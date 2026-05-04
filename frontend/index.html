@@ -12,8 +12,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="dns-prefetch" href="https://nominatim.openstreetmap.org">
     <link rel="dns-prefetch" href="https://api.open-meteo.com">
-    <link rel="preload" href="/static/index.css?v=24" as="style">
-    <link rel="stylesheet" href="/static/index.css?v=24">
+    <link rel="preload" href="/static/index.css?v=25" as="style">
+    <link rel="stylesheet" href="/static/index.css?v=25">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- MapTiler SDK -->
@@ -239,13 +239,16 @@
                 <h3 class="ctrl-title"><i class="fas fa-globe-americas"></i> LOCATION SEARCH</h3>
                 <form class="search-wrap" id="place-search-form">
                     <i class="fas fa-search search-icon"></i>
-                    <input type="text" class="search-input" id="place-search" placeholder="Search any city or place worldwide..." autocomplete="off">
+                    <input type="text" class="search-input" id="place-search" placeholder="Search city, village, district, state, PIN code, or landmark..." autocomplete="off">
+                    <button class="search-locate" id="use-location-btn" type="button" aria-label="Use my current location">
+                        <i class="fas fa-location-crosshairs"></i>
+                    </button>
                     <button class="search-submit" id="place-search-submit" type="submit" aria-label="Search map">
                         <i class="fas fa-arrow-up-right-from-square"></i>
                     </button>
                     <div id="search-results" class="search-results-dropdown"></div>
                 </form>
-                <div class="search-meta" id="search-meta">Search any city, address, landmark, district, or country.</div>
+                <div class="search-meta" id="search-meta">Search any city, village, address, landmark, district, state, PIN code, or country.</div>
             </section>
 
             <div class="ctrl-divider"></div>
@@ -612,7 +615,21 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=26" defer></script>
+    <div class="location-consent" id="location-consent" hidden>
+        <div class="location-card glass">
+            <div class="location-icon"><i class="fas fa-location-crosshairs"></i></div>
+            <div class="location-copy">
+                <strong>Open your current location?</strong>
+                <span>StructureX can center the map on your exact browser location and show the address automatically.</span>
+            </div>
+            <div class="location-actions">
+                <button type="button" id="location-allow">Use location</button>
+                <button type="button" id="location-skip">Not now</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=27" defer></script>
     <!-- Mobile Drawer Override Script -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
