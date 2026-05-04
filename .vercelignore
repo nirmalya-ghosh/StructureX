@@ -1,0 +1,9 @@
+/frontend/
+/StructureX/.git*/
+/StructureX/**/__pycache__/
+/StructureX/**/*.pyc
+/StructureX/*stderr*.txt
+/StructureX/*stdout*.txt
+/StructureX/*error*.txt
+/StructureX/*err*.txt
+/StructureX/*out*.txt

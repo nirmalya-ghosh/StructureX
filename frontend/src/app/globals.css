@@ -1,9 +1,0 @@
-@import "tailwindcss";
-
-/* App-wide base colors are defined here for Tailwind v4 builds. */
-@layer base {
-  body {
-    background-color: var(--color-slate-50);
-    color: var(--color-slate-900);
-  }
-}
