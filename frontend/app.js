@@ -306,6 +306,8 @@ const state = {
     activeSearchIndex: -1,
     mapEnhancementsApplied: false,
     buildingInteractionBound: false,
+    buildingSourceName: null,
+    buildingSourceLayer: "building",
     weatherTarget: null,
     weatherData: null,
     weatherLoading: false,
@@ -602,6 +604,8 @@ function add3DBuildings() {
         console.warn("No vector source found for 3D buildings");
         return;
     }
+    state.buildingSourceName = sourceName;
+    state.buildingSourceLayer = "building";
 
     const labelLayerId = layers.find((layer) => layer.type === "symbol" && layer.layout?.["text-field"])?.id;
 
@@ -633,7 +637,24 @@ function add3DBuildings() {
             labelLayerId
         );
 
-        // Highlight layer uses a dedicated GeoJSON source so only ONE building lights up
+        state.map.addLayer(
+            {
+                id: "3d-buildings-highlight",
+                source: sourceName,
+                "source-layer": "building",
+                type: "fill-extrusion",
+                filter: getEmptyBuildingHighlightFilter(),
+                paint: {
+                    "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
+                    "fill-extrusion-height": ["+", ["coalesce", ["get", "render_height"], 12], 0.8],
+                    "fill-extrusion-color": "#3b82f6",
+                    "fill-extrusion-opacity": 0.92,
+                    "fill-extrusion-vertical-gradient": false,
+                },
+            },
+            labelLayerId
+        );
+
         state.map.addSource("building-highlight-src", {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
@@ -641,14 +662,15 @@ function add3DBuildings() {
 
         state.map.addLayer(
             {
-                id: "3d-buildings-highlight",
+                id: "3d-buildings-highlight-fallback",
                 source: "building-highlight-src",
                 type: "fill-extrusion",
                 paint: {
                     "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
-                    "fill-extrusion-height": ["coalesce", ["get", "render_height"], 12],
+                    "fill-extrusion-height": ["+", ["coalesce", ["get", "render_height"], 12], 0.8],
                     "fill-extrusion-color": "#3b82f6",
-                    "fill-extrusion-opacity": 0.98,
+                    "fill-extrusion-opacity": 0.9,
+                    "fill-extrusion-vertical-gradient": false,
                 },
             },
             labelLayerId
@@ -765,13 +787,23 @@ async function analyzeBuilding(feature, lngLat) {
 }
 
 function highlightBuilding(feature, lngLat) {
-    if (!state.map || !state.map.getSource("building-highlight-src")) {
+    if (!state.map) {
+        return;
+    }
+
+    const featureId = getBuildingFeatureId(feature);
+    if (featureId !== null && state.map.getLayer("3d-buildings-highlight")) {
+        state.map.setFilter("3d-buildings-highlight", getBuildingHighlightFilter(featureId));
+        clearFallbackBuildingHighlight();
+        if (lngLat) {
+            addOrMoveMarker([lngLat.lng, lngLat.lat], { mode: "selected scanning" });
+        }
         return;
     }
 
     const geometry = feature?.geometry;
     if (!geometry) {
-        state.map.getSource("building-highlight-src").setData({ type: "FeatureCollection", features: [] });
+        clearBuildingHighlight();
         return;
     }
 
@@ -788,7 +820,11 @@ function highlightBuilding(feature, lngLat) {
         }
     }
 
-    state.map.getSource("building-highlight-src").setData({
+    if (state.map.getLayer("3d-buildings-highlight")) {
+        state.map.setFilter("3d-buildings-highlight", getEmptyBuildingHighlightFilter());
+    }
+
+    state.map.getSource("building-highlight-src")?.setData({
         type: "FeatureCollection",
         features: [{
             type: "Feature",
@@ -806,6 +842,33 @@ function highlightBuilding(feature, lngLat) {
     if (coords) {
         addOrMoveMarker(coords, { mode: "selected scanning" });
     }
+}
+
+function getBuildingFeatureId(feature) {
+    const id = feature?.id;
+    if (id === undefined || id === null || id === "") {
+        return null;
+    }
+    return id;
+}
+
+function getEmptyBuildingHighlightFilter() {
+    return ["all", ["!", ["has", "hide_3d"]], ["==", ["id"], "__no_selected_building__"]];
+}
+
+function getBuildingHighlightFilter(featureId) {
+    return ["all", ["!", ["has", "hide_3d"]], ["==", ["id"], featureId]];
+}
+
+function clearFallbackBuildingHighlight() {
+    state.map?.getSource("building-highlight-src")?.setData({ type: "FeatureCollection", features: [] });
+}
+
+function clearBuildingHighlight() {
+    if (state.map?.getLayer("3d-buildings-highlight")) {
+        state.map.setFilter("3d-buildings-highlight", getEmptyBuildingHighlightFilter());
+    }
+    clearFallbackBuildingHighlight();
 }
 
 /** Ray-casting point-in-polygon: returns the polygon ring-set that contains (px, py), or null */
@@ -1077,9 +1140,7 @@ function deselectBuilding() {
     state.activeBuildingRequestId += 1;
     state.selectedBuilding = null;
     state.selectedBuildingKey = null;
-    if (state.map && state.map.getSource("building-highlight-src")) {
-        state.map.getSource("building-highlight-src").setData({ type: "FeatureCollection", features: [] });
-    }
+    clearBuildingHighlight();
     if (state.mapMarker) {
         state.mapMarker.getElement().className = "infra-marker pending";
     }
