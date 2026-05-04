@@ -12,8 +12,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="dns-prefetch" href="https://nominatim.openstreetmap.org">
     <link rel="dns-prefetch" href="https://api.open-meteo.com">
-    <link rel="preload" href="/static/index.css?v=25" as="style">
-    <link rel="stylesheet" href="/static/index.css?v=25">
+    <link rel="preload" href="/static/index.css?v=26" as="style">
+    <link rel="stylesheet" href="/static/index.css?v=26">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- MapTiler SDK -->
@@ -249,6 +249,10 @@
                     <div id="search-results" class="search-results-dropdown"></div>
                 </form>
                 <div class="search-meta" id="search-meta">Search any city, village, address, landmark, district, state, PIN code, or country.</div>
+                <button class="location-inline" id="use-location-inline" type="button">
+                    <i class="fas fa-location-crosshairs"></i>
+                    Open live location
+                </button>
             </section>
 
             <div class="ctrl-divider"></div>
@@ -629,7 +633,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=28" defer></script>
+    <script src="/static/app.js?v=29" defer></script>
     <!-- Mobile Drawer Override Script -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {

@@ -718,10 +718,13 @@ function add3DBuildings() {
             {
                 id: "3d-buildings-highlight-fallback",
                 source: "building-highlight-src",
-                type: "fill",
+                type: "fill-extrusion",
                 paint: {
-                    "fill-color": SELECTED_BUILDING_COLOR,
-                    "fill-opacity": 0.38,
+                    "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
+                    "fill-extrusion-height": ["+", ["coalesce", ["get", "render_height"], 12], 1.2],
+                    "fill-extrusion-color": SELECTED_BUILDING_COLOR,
+                    "fill-extrusion-opacity": 0.72,
+                    "fill-extrusion-vertical-gradient": false,
                 },
             },
             labelLayerId
@@ -856,123 +859,142 @@ function highlightBuilding(feature, lngLat, point = null) {
         return;
     }
 
-    const cluster = collectSelectedBuildingParts(feature, point);
-    if (cluster.ids.length) {
-        applyBuildingHighlightIds(cluster.ids);
-        state.selectedBuildingFeatureIds = cluster.ids;
-        clearFallbackBuildingHighlight();
-        if (lngLat) {
-            addOrMoveMarker([lngLat.lng, lngLat.lat], { mode: "selected scanning" });
-        }
-        return;
-    }
-
-    const geometry = feature?.geometry;
-    if (!geometry) {
+    const selectedFeatures = collectExactSelectedBuildingFeatures(feature, lngLat, point);
+    if (!selectedFeatures.length) {
         clearBuildingHighlight();
         return;
-    }
-
-    // Extract ONLY the single polygon the user actually clicked
-    let singleGeometry = geometry;
-
-    if (geometry.type === "MultiPolygon" && lngLat) {
-        const clickedPoly = findClickedPolygon(geometry.coordinates, lngLat.lng, lngLat.lat);
-        if (clickedPoly) {
-            singleGeometry = { type: "Polygon", coordinates: clickedPoly };
-        } else {
-            // Fallback: find the nearest polygon by centroid distance
-            singleGeometry = findNearestPolygon(geometry.coordinates, lngLat.lng, lngLat.lat);
-        }
     }
 
     resetBuildingPaintHighlight();
 
     state.map.getSource("building-highlight-src")?.setData({
         type: "FeatureCollection",
-        features: [{
-            type: "Feature",
-            geometry: singleGeometry,
-            properties: feature.properties || {},
-        }],
+        features: selectedFeatures,
     });
 
-    let coords = null;
-    if (singleGeometry.type === "Polygon") {
-        coords = singleGeometry.coordinates?.[0]?.[0];
-    } else if (singleGeometry.type === "MultiPolygon") {
-        coords = singleGeometry.coordinates?.[0]?.[0]?.[0];
-    }
-    if (coords) {
-        addOrMoveMarker(coords, { mode: "selected scanning" });
+    if (lngLat) {
+        addOrMoveMarker([lngLat.lng, lngLat.lat], { mode: "selected scanning" });
     }
 }
 
-function collectSelectedBuildingParts(feature, point) {
-    const clickedId = getBuildingFeatureId(feature);
-    const candidates = getRenderedBuildingCandidates(feature, point);
-    const cluster = expandBuildingCluster(feature, candidates, point);
-    let ids = uniqueValues(cluster.map(getBuildingFeatureId).filter((id) => id !== null));
-
-    if (!ids.length && clickedId !== null) {
-        ids.push(clickedId);
-    }
-    if (ids.length > 8) {
-        ids = clickedId !== null ? [clickedId] : [];
+function collectExactSelectedBuildingFeatures(feature, lngLat, point) {
+    if (!feature?.geometry) {
+        return [];
     }
 
-    return {
-        features: cluster,
-        ids,
-    };
+    const clickedGeometry = getClickedBuildingGeometry(feature, lngLat);
+    if (!clickedGeometry) {
+        return [];
+    }
+
+    const selected = [{
+        type: "Feature",
+        geometry: clickedGeometry,
+        properties: feature.properties || {},
+    }];
+    const strongKeys = getStrongBuildingGroupKeys(feature);
+    if (strongKeys.length && state.map && point && state.map.getLayer("3d-buildings")) {
+        const radius = 28;
+        const box = [
+            [point.x - radius, point.y - radius],
+            [point.x + radius, point.y + radius],
+        ];
+        try {
+            state.map.queryRenderedFeatures(box, { layers: ["3d-buildings"] }).forEach((candidate) => {
+                if (!candidate || candidate === feature || !sharesAnyValue(strongKeys, getStrongBuildingGroupKeys(candidate))) {
+                    return;
+                }
+                const candidateGeometry = getTouchingBuildingGeometry(candidate, clickedGeometry);
+                if (candidateGeometry && geometriesTouch(clickedGeometry, candidateGeometry)) {
+                    selected.push({
+                        type: "Feature",
+                        geometry: candidateGeometry,
+                        properties: candidate.properties || {},
+                    });
+                }
+            });
+        } catch (error) {
+            console.warn("Same-building part lookup failed", error);
+        }
+    }
+
+    return dedupeFeatures(selected)
+        .slice(0, 4)
+        .filter((item) => item.geometry);
 }
 
-function getRenderedBuildingCandidates(feature, point) {
-    const items = [feature].filter(Boolean);
-    if (!state.map || !point || !state.map.getLayer("3d-buildings")) {
-        return items;
+function getClickedBuildingGeometry(feature, lngLat) {
+    const geometry = feature?.geometry;
+    if (!geometry) {
+        return null;
     }
-
-    const radius = Math.max(48, Math.min(84, Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.08)));
-    const box = [
-        [point.x - radius, point.y - radius],
-        [point.x + radius, point.y + radius],
-    ];
-
-    try {
-        items.push(...state.map.queryRenderedFeatures(box, { layers: ["3d-buildings"] }));
-    } catch (error) {
-        console.warn("Building cluster query failed", error);
+    if (geometry.type === "MultiPolygon" && lngLat) {
+        const clickedPoly = findClickedPolygon(geometry.coordinates, lngLat.lng, lngLat.lat);
+        if (clickedPoly) {
+            return { type: "Polygon", coordinates: clickedPoly };
+        }
+        return findNearestPolygon(geometry.coordinates, lngLat.lng, lngLat.lat);
     }
-
-    return dedupeFeatures(items);
+    return geometry;
 }
 
-function expandBuildingCluster(seedFeature, candidates, point) {
-    const seedId = getBuildingFeatureId(seedFeature);
-    const seedKeys = getBuildingGroupKeys(seedFeature);
-    const cluster = [];
-
-    candidates.forEach((candidate) => {
-        if (!candidate) {
-            return;
-        }
-        const candidateId = getBuildingFeatureId(candidate);
-        if (seedId !== null && candidateId === seedId) {
-            cluster.push(candidate);
-            return;
-        }
-        if (sharesAnyValue(seedKeys, getBuildingGroupKeys(candidate))) {
-            cluster.push(candidate);
-            return;
-        }
-    });
-
-    if (!cluster.length) {
-        cluster.push(seedFeature);
+function getTouchingBuildingGeometry(feature, clickedGeometry) {
+    const geometry = feature?.geometry;
+    if (!geometry) {
+        return null;
     }
 
-    return dedupeFeatures(cluster);
+    if (geometry.type !== "MultiPolygon") {
+        return geometriesTouch(clickedGeometry, geometry) ? geometry : null;
+    }
+
+    const touchingPolygons = geometry.coordinates.filter((polygonCoords) =>
+        geometriesTouch(clickedGeometry, { type: "Polygon", coordinates: polygonCoords })
+    );
+
+    if (!touchingPolygons.length) {
+        return null;
+    }
+
+    if (touchingPolygons.length === 1) {
+        return { type: "Polygon", coordinates: touchingPolygons[0] };
+    }
+
+    return { type: "MultiPolygon", coordinates: touchingPolygons };
+}
+
+function geometriesTouch(firstGeometry, secondGeometry) {
+    const firstBox = getGeometryBbox(firstGeometry);
+    const secondBox = getGeometryBbox(secondGeometry);
+    if (!firstBox || !secondBox) {
+        return false;
+    }
+
+    const tolerance = 0.000035;
+    return !(
+        secondBox.minLng > firstBox.maxLng + tolerance ||
+        secondBox.maxLng < firstBox.minLng - tolerance ||
+        secondBox.minLat > firstBox.maxLat + tolerance ||
+        secondBox.maxLat < firstBox.minLat - tolerance
+    );
+}
+
+function getGeometryBbox(geometry) {
+    const coords = [];
+    collectGeometryCoordinates(geometry, coords);
+    if (!coords.length) {
+        return null;
+    }
+
+    return coords.reduce(
+        (box, coord) => ({
+            minLng: Math.min(box.minLng, Number(coord[0])),
+            minLat: Math.min(box.minLat, Number(coord[1])),
+            maxLng: Math.max(box.maxLng, Number(coord[0])),
+            maxLat: Math.max(box.maxLat, Number(coord[1])),
+        }),
+        { minLng: Infinity, minLat: Infinity, maxLng: -Infinity, maxLat: -Infinity }
+    );
 }
 
 function getBuildingFeatureId(feature) {
@@ -1044,6 +1066,20 @@ function resetBuildingPaintHighlight() {
     if (state.map.getLayer("3d-buildings-highlight")) {
         state.map.setFilter("3d-buildings-highlight", getEmptyBuildingHighlightFilter());
     }
+}
+
+function getStrongBuildingGroupKeys(feature) {
+    const props = feature?.properties || {};
+    return [
+        props.osm_id,
+        props.osm_way_id,
+        props.osm_relation_id,
+        props.way_id,
+        props.relation_id,
+        props.building_id,
+    ]
+        .filter((value) => value !== undefined && value !== null && String(value).trim())
+        .map((value) => String(value).toLowerCase());
 }
 
 function clearFallbackBuildingHighlight() {
@@ -1523,6 +1559,7 @@ function initPlaceSearch() {
     const dropdown = $("#search-results");
     const form = $("#place-search-form");
     const locateButton = $("#use-location-btn");
+    const inlineLocateButton = $("#use-location-inline");
     if (!input || !dropdown) {
         return;
     }
@@ -1594,6 +1631,9 @@ function initPlaceSearch() {
 
     locateButton?.addEventListener("click", () => {
         requestUserLocation({ source: "search-button" });
+    });
+    inlineLocateButton?.addEventListener("click", () => {
+        requestUserLocation({ source: "inline-location-button" });
     });
 }
 
@@ -1912,7 +1952,7 @@ function initUserLocationPrompt() {
     allow?.addEventListener("click", () => requestUserLocation({ source: "startup-prompt" }));
     skip?.addEventListener("click", () => hideLocationPrompt());
 
-    if (!navigator.geolocation || !prompt || sessionStorage.getItem("sx-location-suggested") === "1") {
+    if (!navigator.geolocation || !prompt) {
         return;
     }
 
@@ -1929,7 +1969,6 @@ function showLocationPrompt() {
         return;
     }
     state.locationPromptVisible = true;
-    sessionStorage.setItem("sx-location-suggested", "1");
     prompt.hidden = false;
     prompt.classList.add("show");
 }

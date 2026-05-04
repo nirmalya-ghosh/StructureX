@@ -2035,6 +2035,27 @@ body.right-panel-collapsed .right-toggle {
     color: var(--text-dim);
     line-height: 1.5;
 }
+.location-inline {
+    width: 100%;
+    margin-top: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1px solid rgba(147,197,253,0.18);
+    border-radius: 999px;
+    padding: 9px 11px;
+    background: rgba(59,130,246,0.14);
+    color: var(--text-bright);
+    font-size: 0.68rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+.location-inline:hover {
+    background: rgba(59,130,246,0.22);
+    box-shadow: 0 10px 20px rgba(59,130,246,0.12);
+}
 .search-result-empty {
     padding: 12px 14px;
     color: var(--text-dim);
