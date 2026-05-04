@@ -22,6 +22,13 @@
     <script>
         // Session Check
         (function() {
+            const oauthSearch = new URLSearchParams(window.location.search);
+            const hasOAuthReturn = oauthSearch.has('code') || oauthSearch.has('error') || window.location.hash.includes('access_token');
+            if (hasOAuthReturn) {
+                window.location.replace('/auth-callback.html' + window.location.search + window.location.hash);
+                return;
+            }
+
             const user = localStorage.getItem('sx_user');
             if (!user && !window.location.pathname.includes('login')) {
                 window.location.href = '/login';
