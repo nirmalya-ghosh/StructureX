@@ -3054,6 +3054,30 @@ body[data-risk-level="critical"] #header {
     color: #38bdf8;
 }
 
+.voice-command-panel {
+    margin: 4px 8px 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(56, 189, 248, 0.18);
+    background: rgba(15, 23, 42, 0.58);
+}
+
+.voice-command-status {
+    color: #38bdf8;
+    font-size: 0.62rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.voice-command-transcript {
+    margin-top: 6px;
+    min-height: 18px;
+    color: var(--text);
+    font-size: 0.72rem;
+    line-height: 1.45;
+}
+
 .v-menu-header {
     font-size: 0.65rem;
     font-weight: 800;
@@ -3346,6 +3370,13 @@ body[data-risk-level="critical"] #header {
     border-color: rgba(239, 68, 68, 0.5);
     color: #ef4444;
     animation: v-pulse-dot 1.5s infinite;
+}
+
+.nav-voice-btn.listening {
+    background: rgba(34, 197, 94, 0.14);
+    border-color: rgba(34, 197, 94, 0.48);
+    color: #86efac;
+    box-shadow: 0 0 18px rgba(34, 197, 94, 0.25);
 }
 
 @media (max-width: 900px) {

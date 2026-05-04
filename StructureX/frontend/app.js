@@ -833,6 +833,7 @@ async function analyzeBuilding(feature, lngLat, point = null) {
         }
 
         renderBuildingAnalysis(result, locationMeta, height, lngLat, feature);
+        window.StructureXVoice?.handleBuildingAnalysisComplete?.(result, locationMeta);
         addToHistory({
             id: selectionKey,
             address: locationMeta.area || locationMeta.address,
@@ -850,6 +851,7 @@ async function analyzeBuilding(feature, lngLat, point = null) {
         }
         console.error(error);
         renderBuildingError(locationMeta);
+        window.StructureXVoice?.handleBuildingAnalysisError?.(locationMeta);
         setSystemStatus("Building AI fallback");
     }
 }
@@ -1672,13 +1674,13 @@ async function runPlaceSearch(query, options = {}) {
             dropdown.innerHTML = `<div class="search-result-empty">No matching city, village, state, district, landmark, or PIN code found.</div>`;
             dropdown.style.display = "block";
             meta.textContent = "Try adding district, state, or India after the place name.";
-            return;
+            return [];
         }
 
         if (options.autoSelectFirst) {
-            selectPlaceResult(features[0]);
+            selectPlaceResult(features[0], options.selectOptions || {});
             dropdown.style.display = "none";
-            return;
+            return features[0];
         }
 
         dropdown.innerHTML = features
@@ -1715,11 +1717,13 @@ async function runPlaceSearch(query, options = {}) {
                 dropdown.style.display = "none";
             });
         });
+        return features;
     } catch (error) {
         console.error(error);
         dropdown.innerHTML = `<div class="search-result-empty">Search temporarily unavailable.</div>`;
         dropdown.style.display = "block";
         meta.textContent = "Global search is temporarily unavailable. Please try again.";
+        return [];
     }
 }
 
@@ -1883,7 +1887,7 @@ function updateSearchSelection(items) {
     });
 }
 
-function selectPlaceResult(feature) {
+function selectPlaceResult(feature, options = {}) {
     if (!feature) {
         return;
     }
@@ -1926,7 +1930,7 @@ function selectPlaceResult(feature) {
     addOrMoveMarker([lng, lat]);
     
     // Auto-trigger analysis for POIs
-    if (isPOI) {
+    if (isPOI && !options.skipAutoAnalysis) {
         setSystemStatus(`Deep scan targeting: ${feature.text}`);
         setTimeout(() => {
             const mockFeature = {
@@ -1942,6 +1946,7 @@ function selectPlaceResult(feature) {
     }
 
     runResilienceAnalysis({ silent: true });
+    return feature;
 }
 
 function initUserLocationPrompt() {
@@ -5235,6 +5240,10 @@ function initVoiceAssistant() {
     const navVoiceMenu = document.getElementById('nav-voice-menu');
     const navReadBtn = document.getElementById('nav-read-btn');
     const navSummarizeBtn = document.getElementById('nav-summarize-btn');
+    const navListenBtn = document.getElementById('nav-listen-btn');
+    const voiceCommandStatus = document.getElementById('voice-command-status');
+    const voiceCommandTranscript = document.getElementById('voice-command-transcript');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     
     // Updated Status Panel controls
     const statusPanel = document.getElementById('voice-status-panel');
@@ -5251,6 +5260,15 @@ function initVoiceAssistant() {
     let isSpeakingSequence = false;
     let isVoicePaused = false;
     let isNavMenuOpen = false;
+    let recognition = null;
+    let recognitionRunning = false;
+    let commandListening = false;
+    let recognitionSuspendedForSpeech = false;
+    let restartRecognitionTimer = null;
+    let commandHotUntil = 0;
+    let lastVoiceCommand = "";
+    let lastVoiceCommandAt = 0;
+    let pendingVoiceAnalysisNarration = false;
 
     function positionNavVoiceMenu() {
         if (!navVoiceBtn || !navVoiceMenu) return;
@@ -5277,6 +5295,483 @@ function initVoiceAssistant() {
         if (!navVoiceMenu) return;
         navVoiceMenu.classList.remove('show');
         isNavMenuOpen = false;
+    }
+
+    function setVoiceCommandStatus(status, transcript = null) {
+        if (voiceCommandStatus) {
+            voiceCommandStatus.textContent = status;
+        }
+        if (transcript !== null && voiceCommandTranscript) {
+            voiceCommandTranscript.textContent = transcript || "Listening...";
+        }
+    }
+
+    function updateListenButton() {
+        if (!navListenBtn) {
+            return;
+        }
+        navListenBtn.innerHTML = commandListening
+            ? '<i class="fas fa-ear-listen"></i> Stop Live Listening'
+            : '<i class="fas fa-ear-listen"></i> Start Live Listening';
+    }
+
+    function getRecognition() {
+        if (!SpeechRecognition) {
+            return null;
+        }
+        if (recognition) {
+            return recognition;
+        }
+
+        recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = navigator.language || "en-US";
+
+        recognition.onstart = () => {
+            recognitionRunning = true;
+            navVoiceBtn?.classList.add("listening");
+            setVoiceCommandStatus("Listening", voiceCommandTranscript?.textContent || "Ready");
+            updateListenButton();
+        };
+
+        recognition.onend = () => {
+            recognitionRunning = false;
+            navVoiceBtn?.classList.remove("listening");
+            if (commandListening && !recognitionSuspendedForSpeech) {
+                restartVoiceRecognitionSoon(240);
+                return;
+            }
+            if (!commandListening) {
+                setVoiceCommandStatus("Voice standby", "No command heard yet");
+            }
+            updateListenButton();
+        };
+
+        recognition.onerror = (event) => {
+            recognitionRunning = false;
+            if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+                commandListening = false;
+                recognitionSuspendedForSpeech = false;
+                setVoiceCommandStatus("Microphone blocked", "Enable microphone permission in the browser.");
+                navVoiceBtn?.classList.remove("listening");
+                updateListenButton();
+                return;
+            }
+            if (commandListening && !recognitionSuspendedForSpeech) {
+                setVoiceCommandStatus("Listening", "Reconnecting voice input...");
+            }
+        };
+
+        recognition.onresult = (event) => {
+            let interimText = "";
+            let finalText = "";
+            for (let index = event.resultIndex; index < event.results.length; index += 1) {
+                const transcript = event.results[index][0]?.transcript || "";
+                if (event.results[index].isFinal) {
+                    finalText += transcript;
+                } else {
+                    interimText += transcript;
+                }
+            }
+
+            if (interimText.trim()) {
+                setVoiceCommandStatus("Hearing", interimText.trim());
+            }
+            if (finalText.trim()) {
+                processVoiceTranscript(finalText.trim());
+            }
+        };
+
+        return recognition;
+    }
+
+    function startVoiceCommandListening({ announce = false } = {}) {
+        const voiceRecognition = getRecognition();
+        if (!voiceRecognition) {
+            setVoiceCommandStatus("Voice unavailable", "Live listening is not supported in this browser.");
+            if (announce) {
+                speakText("Live voice listening is not supported in this browser. Please use Chrome or Edge for microphone commands.");
+            }
+            return;
+        }
+
+        commandListening = true;
+        recognitionSuspendedForSpeech = false;
+        setVoiceCommandStatus("Starting", "Requesting microphone...");
+        updateListenButton();
+        if (!recognitionRunning) {
+            try {
+                voiceRecognition.start();
+            } catch (error) {
+                console.warn("Voice recognition start skipped", error);
+            }
+        }
+        if (announce) {
+            speakText("Voice command mode is online.");
+        }
+    }
+
+    function stopVoiceCommandListening({ announce = false } = {}) {
+        commandListening = false;
+        recognitionSuspendedForSpeech = false;
+        clearTimeout(restartRecognitionTimer);
+        try {
+            recognition?.stop();
+        } catch (error) {
+            console.warn("Voice recognition stop skipped", error);
+        }
+        navVoiceBtn?.classList.remove("listening");
+        setVoiceCommandStatus("Voice standby", "No command heard yet");
+        updateListenButton();
+        if (announce) {
+            speakText("Live listening stopped.");
+        }
+    }
+
+    function restartVoiceRecognitionSoon(delay = 260) {
+        clearTimeout(restartRecognitionTimer);
+        restartRecognitionTimer = window.setTimeout(() => {
+            if (!commandListening || recognitionSuspendedForSpeech || recognitionRunning) {
+                return;
+            }
+            try {
+                recognition?.start();
+            } catch (error) {
+                console.warn("Voice recognition restart skipped", error);
+            }
+        }, delay);
+    }
+
+    function suspendCommandRecognitionForSpeech() {
+        if (!commandListening || !recognition || !recognitionRunning) {
+            return;
+        }
+        recognitionSuspendedForSpeech = true;
+        try {
+            recognition.stop();
+        } catch (error) {
+            console.warn("Voice recognition speech pause skipped", error);
+        }
+    }
+
+    function resumeCommandRecognitionAfterSpeech() {
+        if (!commandListening || !recognitionSuspendedForSpeech) {
+            return;
+        }
+        recognitionSuspendedForSpeech = false;
+        restartVoiceRecognitionSoon(320);
+    }
+
+    function processVoiceTranscript(transcript) {
+        const parsed = parseVoiceCommand(transcript);
+        const normalized = normalizeVoiceCommand(transcript);
+        const now = Date.now();
+        setVoiceCommandStatus("Heard", transcript);
+        if (!parsed) {
+            return;
+        }
+        if (normalized === lastVoiceCommand && now - lastVoiceCommandAt < 1800) {
+            return;
+        }
+        lastVoiceCommand = normalized;
+        lastVoiceCommandAt = now;
+        executeVoiceCommand(parsed);
+    }
+
+    function parseVoiceCommand(transcript) {
+        const normalized = normalizeVoiceCommand(transcript);
+        if (!normalized) {
+            return null;
+        }
+
+        const wakePhrases = ["hey structurex", "ok structurex", "hello structurex", "structurex"];
+        let command = normalized;
+        let hasWake = false;
+        for (const phrase of wakePhrases) {
+            const index = normalized.indexOf(phrase);
+            if (index >= 0) {
+                command = normalized.slice(index + phrase.length).trim();
+                hasWake = true;
+                commandHotUntil = Date.now() + 9000;
+                break;
+            }
+        }
+
+        if (!hasWake && Date.now() > commandHotUntil && !looksLikeDirectVoiceCommand(command)) {
+            return null;
+        }
+
+        command = command.replace(/^(please|just|can you|could you|would you|now)\s+/g, "").trim();
+        if (!command) {
+            return { intent: "ready" };
+        }
+
+        if (/\b(stop listening|sleep|go offline|turn off microphone)\b/.test(command)) {
+            return { intent: "stop_listening" };
+        }
+        if (/\b(stop talking|quiet|cancel speech|stop speaking)\b/.test(command)) {
+            return { intent: "stop_speaking" };
+        }
+        if (/\b(my location|current location|live location|open location|where am i)\b/.test(command)) {
+            return { intent: "location" };
+        }
+        if (/\b(full report|read report|read everything)\b/.test(command)) {
+            return { intent: "full_report" };
+        }
+        if (/\b(summary|summarize|summarise|tell me this|what is this|explain this)\b/.test(command)) {
+            return { intent: "summarize" };
+        }
+
+        const wantsAnalysis = /\b(analyze|analyse|scan|inspect|review|select|choose|building|structure)\b/.test(command);
+        const query = extractVoicePlaceQuery(command);
+        if (query) {
+            return {
+                intent: wantsAnalysis ? "analyze_place" : "search_place",
+                query,
+            };
+        }
+        if (wantsAnalysis) {
+            return { intent: "analyze_center" };
+        }
+
+        return { intent: "answer", text: command };
+    }
+
+    function normalizeVoiceCommand(value) {
+        return String(value || "")
+            .toLowerCase()
+            .replace(/structure\s*x/g, "structurex")
+            .replace(/[^a-z0-9\s.,'-]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    function looksLikeDirectVoiceCommand(command) {
+        return /\b(search|find|show|open|go to|navigate|locate|select|analyze|analyse|scan|inspect|review|summarize|summarise|tell me|where is|what is)\b/.test(command);
+    }
+
+    function extractVoicePlaceQuery(command) {
+        let query = command
+            .replace(/\b(search for|search|find|show me|show|open|go to|navigate to|take me to|locate|look up)\b/g, " ")
+            .replace(/\b(select|choose|analyze|analyse|scan|inspect|review)\b/g, " ")
+            .replace(/\b(tell me about|tell me|what is|where is)\b/g, " ")
+            .replace(/\b(please|just|near me|nearby|now)\b/g, " ")
+            .replace(/\b(this building|this area|this place|current area|current place)\b/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        query = query.replace(/^(the|a|an)\s+/g, "").replace(/\s+(please|now)$/g, "").trim();
+        return query.length >= 2 ? query : "";
+    }
+
+    async function executeVoiceCommand(command) {
+        commandHotUntil = Date.now() + 9000;
+        if (command.intent === "ready") {
+            setVoiceCommandStatus("Ready", "Waiting for command");
+            speakText("Ready.");
+            return;
+        }
+        if (command.intent === "stop_listening") {
+            stopVoiceCommandListening({ announce: true });
+            return;
+        }
+        if (command.intent === "stop_speaking") {
+            stopSpeaking();
+            setVoiceCommandStatus("Listening", "Speech stopped");
+            return;
+        }
+        if (command.intent === "location") {
+            speakText("Opening your live location.");
+            requestUserLocation({ source: "voice-command" });
+            return;
+        }
+        if (command.intent === "full_report") {
+            speakSequence(getTextSegments("full"));
+            return;
+        }
+        if (command.intent === "summarize") {
+            speakSequence(getTextSegments("summarize"));
+            return;
+        }
+        if (command.intent === "search_place" || command.intent === "analyze_place") {
+            await runVoicePlaceCommand(command.query, { analyze: command.intent === "analyze_place" });
+            return;
+        }
+        if (command.intent === "analyze_center") {
+            await analyzeNearestBuildingAtMapCenter();
+            return;
+        }
+        answerCurrentContext(command.text);
+    }
+
+    async function runVoicePlaceCommand(query, { analyze = false } = {}) {
+        if (!query) {
+            speakText("I need a place or building name.");
+            return;
+        }
+
+        const input = document.getElementById("place-search");
+        const meta = document.getElementById("search-meta");
+        if (input) {
+            input.value = query;
+        }
+        if (meta) {
+            meta.textContent = `Voice searching: ${query}...`;
+        }
+        setSystemStatus(`Voice search: ${query}`);
+        closeNavVoiceMenu();
+        speakText(analyze ? `Searching ${query} and selecting a building.` : `Searching ${query}.`);
+
+        const selected = await runPlaceSearch(query, {
+            autoSelectFirst: true,
+            selectOptions: { skipAutoAnalysis: analyze },
+        });
+        if (!selected?.center) {
+            speakText(`I could not find ${query}.`);
+            return;
+        }
+
+        const label = selected.text || selected.place_name || query;
+        if (!analyze) {
+            speakText(`Mapped ${label}.`);
+            return;
+        }
+
+        const didSelect = await analyzeNearestBuildingNear(
+            { lng: Number(selected.center[0]), lat: Number(selected.center[1]) },
+            label
+        );
+        if (!didSelect) {
+            speakText(`I mapped ${label}, but I could not isolate a nearby 3D building. Tap a building on the map to scan it.`);
+        }
+    }
+
+    async function analyzeNearestBuildingAtMapCenter() {
+        if (!state.mapReady || !state.map) {
+            speakText("The map is still loading.");
+            return;
+        }
+        const center = state.map.getCenter();
+        const didSelect = await analyzeNearestBuildingNear({ lng: center.lng, lat: center.lat }, "the map center");
+        if (!didSelect) {
+            speakText("I could not find a selectable 3D building at the center of the map.");
+        }
+    }
+
+    async function analyzeNearestBuildingNear(lngLat, label) {
+        if (!state.mapReady || !state.map?.getLayer("3d-buildings")) {
+            return false;
+        }
+        await waitForMapIdle(1800);
+        const feature = findNearestRenderedBuilding(lngLat);
+        if (!feature) {
+            return false;
+        }
+        const featureLngLat = getFeatureLngLat(feature) || lngLat;
+        const point = state.map.project([featureLngLat.lng, featureLngLat.lat]);
+        pendingVoiceAnalysisNarration = true;
+        setSystemStatus(`Voice selected building near ${label}`);
+        analyzeBuilding(feature, featureLngLat, point);
+        speakText(`I selected the nearest mapped building near ${label}. Running the structural scan now.`);
+        return true;
+    }
+
+    function waitForMapIdle(timeout = 1600) {
+        return new Promise((resolve) => {
+            if (!state.map) {
+                resolve(false);
+                return;
+            }
+            let done = false;
+            const finish = (value) => {
+                if (done) {
+                    return;
+                }
+                done = true;
+                resolve(value);
+            };
+            state.map.once("idle", () => finish(true));
+            window.setTimeout(() => finish(false), timeout);
+        });
+    }
+
+    function findNearestRenderedBuilding(lngLat) {
+        if (!state.map?.getLayer("3d-buildings")) {
+            return null;
+        }
+        const point = state.map.project([lngLat.lng, lngLat.lat]);
+        const radii = [18, 36, 64, 96, 140];
+        for (const radius of radii) {
+            const box = [
+                [point.x - radius, point.y - radius],
+                [point.x + radius, point.y + radius],
+            ];
+            const features = dedupeFeatures(state.map.queryRenderedFeatures(box, { layers: ["3d-buildings"] }))
+                .filter((feature) => feature?.geometry);
+            if (features.length) {
+                return features.sort((a, b) => getFeatureScreenDistance(point, a) - getFeatureScreenDistance(point, b))[0];
+            }
+        }
+        return null;
+    }
+
+    function getFeatureLngLat(feature) {
+        const coords = [];
+        collectGeometryCoordinates(feature?.geometry, coords);
+        if (!coords.length) {
+            return null;
+        }
+        const box = coords.reduce((bounds, coord) => ({
+            minLng: Math.min(bounds.minLng, Number(coord[0])),
+            minLat: Math.min(bounds.minLat, Number(coord[1])),
+            maxLng: Math.max(bounds.maxLng, Number(coord[0])),
+            maxLat: Math.max(bounds.maxLat, Number(coord[1])),
+        }), { minLng: Infinity, minLat: Infinity, maxLng: -Infinity, maxLat: -Infinity });
+        return {
+            lng: (box.minLng + box.maxLng) / 2,
+            lat: (box.minLat + box.maxLat) / 2,
+        };
+    }
+
+    function getFeatureScreenDistance(point, feature) {
+        const lngLat = getFeatureLngLat(feature);
+        if (!lngLat || !state.map) {
+            return Number.POSITIVE_INFINITY;
+        }
+        const projected = state.map.project([lngLat.lng, lngLat.lat]);
+        return Math.hypot(projected.x - point.x, projected.y - point.y);
+    }
+
+    function answerCurrentContext(commandText) {
+        const lower = String(commandText || "").toLowerCase();
+        if (lower.includes("weather") && state.weatherTarget) {
+            const target = state.weatherTarget.name || state.weatherTarget.area || "this area";
+            const current = state.weatherData?.current;
+            if (current) {
+                speakText(`Weather for ${target}: ${Math.round(current.temperature_2m)} degrees Celsius, wind ${Math.round(current.wind_speed_10m)} kilometers per hour.`);
+                return;
+            }
+            speakText(`Weather for ${target} is being loaded.`);
+            return;
+        }
+        speakSequence(getTextSegments("summarize"));
+    }
+
+    function buildVoiceRiskLabel(score) {
+        if (!Number.isFinite(score)) {
+            return "risk level unavailable";
+        }
+        if (score >= 75) {
+            return "critical risk";
+        }
+        if (score >= 50) {
+            return "high risk";
+        }
+        if (score >= 25) {
+            return "moderate risk";
+        }
+        return "low risk";
     }
 
     function initVoicePanelDrag() {
@@ -5332,11 +5827,25 @@ function initVoiceAssistant() {
                 stopSpeaking();
                 closeNavVoiceMenu();
             } else {
+                if (!commandListening) {
+                    startVoiceCommandListening({ announce: true });
+                }
                 if (isNavMenuOpen) {
                     closeNavVoiceMenu();
                 } else {
                     openNavVoiceMenu();
                 }
+            }
+        });
+    }
+
+    if (navListenBtn) {
+        navListenBtn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            if (commandListening) {
+                stopVoiceCommandListening({ announce: true });
+            } else {
+                startVoiceCommandListening({ announce: true });
             }
         });
     }
@@ -5551,6 +6060,7 @@ function initVoiceAssistant() {
 
     function speakSequence(segments) {
         // Wake up/Clear engine to prevent the 10s delay bug in some browsers
+        suspendCommandRecognitionForSpeech();
         synth.cancel();
         const wakeUp = new SpeechSynthesisUtterance("");
         synth.speak(wakeUp);
@@ -5568,6 +6078,14 @@ function initVoiceAssistant() {
         playNextSegment();
     }
 
+    function speakText(text) {
+        const cleanText = String(text || "").replace(/\s+/g, " ").trim();
+        if (!cleanText) {
+            return;
+        }
+        speakSequence(cleanText.match(/[^.!?]+[.!?]+/g) || [`${cleanText}.`]);
+    }
+
     function stopSpeaking() {
         isSpeakingSequence = false;
         isVoicePaused = false;
@@ -5576,6 +6094,7 @@ function initVoiceAssistant() {
         if (navVoiceBtn) navVoiceBtn.classList.remove('active');
         statusPanel.classList.remove('active');
         stopTimer();
+        resumeCommandRecognitionAfterSpeech();
     }
 
     pauseBtn.addEventListener('click', (e) => {
@@ -5606,6 +6125,40 @@ function initVoiceAssistant() {
             e.stopPropagation();
             stopSpeaking();
         });
+    }
+
+    window.StructureXVoice = {
+        speak: speakText,
+        handleBuildingAnalysisComplete(result, locationMeta) {
+            if (!pendingVoiceAnalysisNarration) {
+                return;
+            }
+            pendingVoiceAnalysisNarration = false;
+            const score = Number(result?.risk_score ?? result?.riskScore ?? result?.score);
+            const label = locationMeta?.label || locationMeta?.area || "Selected building";
+            const recommendation = Array.isArray(result?.recommendations) && result.recommendations.length
+                ? ` ${result.recommendations[0]}`
+                : "";
+            speakText(`${label} scan complete. Risk score ${Number.isFinite(score) ? score.toFixed(1) : "unavailable"} out of 100, ${buildVoiceRiskLabel(score)}.${recommendation}`);
+        },
+        handleBuildingAnalysisError(locationMeta) {
+            if (!pendingVoiceAnalysisNarration) {
+                return;
+            }
+            pendingVoiceAnalysisNarration = false;
+            const label = locationMeta?.label || locationMeta?.area || "that building";
+            speakText(`I opened ${label}, but the full structural scan could not finish right now.`);
+        },
+    };
+
+    if (!SpeechRecognition) {
+        setVoiceCommandStatus("Voice unavailable", "Live listening is not supported in this browser.");
+        if (navListenBtn) {
+            navListenBtn.disabled = true;
+        }
+    } else {
+        setVoiceCommandStatus("Voice standby", "No command heard yet");
+        updateListenButton();
     }
 
     // Delegation for inline voice buttons inside the right panel
