@@ -20,7 +20,9 @@ function getSupabaseClient() {
     'NEXT_PUBLIC_SUPABASE_URL',
     'VITE_SUPABASE_URL'
   )
-  const supabaseAnonKey = readEnv(
+  const supabaseKey = readEnv(
+    'SUPABASE_SERVICE_ROLE_KEY',
+    'SUPABASE_SECRET_KEY',
     'SUPABASE_ANON_KEY',
     'SUPABASE_PUBLISHABLE_KEY',
     'NEXT_PUBLIC_SUPABASE_ANON_KEY',
@@ -28,11 +30,11 @@ function getSupabaseClient() {
     'VITE_SUPABASE_ANON_KEY'
   )
 
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error('Missing SUPABASE_URL or SUPABASE_ANON_KEY in Vercel environment variables')
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in Vercel environment variables')
   }
 
-  return createClient(supabaseUrl, supabaseAnonKey)
+  return createClient(supabaseUrl, supabaseKey)
 }
 
 function getEncryptionKey() {
@@ -86,6 +88,12 @@ export default async function handler(req, res) {
     const { error } = await supabase.from('secure_data').insert([encrypted])
 
     if (error) {
+      if (/row-level security/i.test(error.message || '')) {
+        return res.status(500).json({
+          error: 'Supabase rejected the insert because row-level security is enabled. Add SUPABASE_SERVICE_ROLE_KEY to Vercel or create an insert policy for secure_data.'
+        })
+      }
+
       return res.status(500).json({ error: error.message })
     }
 
