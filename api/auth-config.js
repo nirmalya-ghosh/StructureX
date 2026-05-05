@@ -2,7 +2,7 @@ const { json } = require("./_structurex-data");
 
 function readEnv(...names) {
   for (const name of names) {
-    const value = process.env[name];
+    const value = process.env[name]?.trim();
     if (value) {
       return value;
     }
