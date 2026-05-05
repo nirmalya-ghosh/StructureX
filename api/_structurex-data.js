@@ -80,6 +80,181 @@ function round(value, digits = 3) {
   return Math.round(Number(value) * scale) / scale;
 }
 
+const LIVE_DATA_TIMEOUT_MS = 4500;
+const LIVE_SEISMIC_RADIUS_KM = 300;
+
+function haversineKm(a, b) {
+  const toRad = (value) => (Number(value) * Math.PI) / 180;
+  const radiusKm = 6371;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return radiusKm * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs = LIVE_DATA_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { "User-Agent": "StructureX/1.0 infrastructure-risk-demo" },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchLiveWeather(lat, lng) {
+  const url = new URL("https://api.open-meteo.com/v1/forecast");
+  url.searchParams.set("latitude", String(lat));
+  url.searchParams.set("longitude", String(lng));
+  url.searchParams.set(
+    "current",
+    [
+      "temperature_2m",
+      "relative_humidity_2m",
+      "apparent_temperature",
+      "precipitation",
+      "weather_code",
+      "wind_speed_10m",
+      "wind_gusts_10m",
+      "surface_pressure",
+      "cloud_cover",
+      "visibility",
+    ].join(",")
+  );
+  url.searchParams.set("timezone", "auto");
+
+  const payload = await fetchJsonWithTimeout(url);
+  const current = payload.current || {};
+  return {
+    source: "Open-Meteo",
+    observed_at: current.time || null,
+    timezone: payload.timezone || "auto",
+    elevation_m: Number(payload.elevation || 0),
+    temperature_c: Number(current.temperature_2m),
+    apparent_temperature_c: Number(current.apparent_temperature),
+    humidity_pct: Number(current.relative_humidity_2m),
+    precipitation_mm: Number(current.precipitation),
+    wind_speed_kph: Number(current.wind_speed_10m),
+    wind_gusts_kph: Number(current.wind_gusts_10m),
+    pressure_hpa: Number(current.surface_pressure),
+    cloud_cover_pct: Number(current.cloud_cover),
+    visibility_km: Number(current.visibility) / 1000,
+  };
+}
+
+async function fetchRecentSeismicity(lat, lng) {
+  const payload = await fetchJsonWithTimeout(
+    "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_month.geojson",
+    7000
+  );
+  const events = Array.isArray(payload.features) ? payload.features : [];
+  const normalized = events
+    .map((event) => {
+      const [eventLng, eventLat, depthKm] = event.geometry?.coordinates || [];
+      const magnitude = Number(event.properties?.mag || 0);
+      return {
+        id: event.id,
+        magnitude,
+        place: event.properties?.place || "Unknown epicenter",
+        time: event.properties?.time ? new Date(event.properties.time).toISOString() : null,
+        depth_km: Number(depthKm || 0),
+        distance_km: haversineKm({ lat, lng }, { lat: Number(eventLat), lng: Number(eventLng) }),
+      };
+    })
+    .filter((event) => event.distance_km <= LIVE_SEISMIC_RADIUS_KM)
+    .filter((event) => Number.isFinite(event.magnitude) && Number.isFinite(event.distance_km));
+
+  const nearby = normalized.sort((a, b) => b.magnitude - a.magnitude);
+  const strongest = nearby[0] || null;
+  const nearest = nearby.length
+    ? nearby.reduce((best, event) => (event.distance_km < best.distance_km ? event : best), nearby[0])
+    : null;
+
+  return {
+    source: "USGS Earthquake Catalog",
+    lookback_days: 30,
+    min_magnitude: 4.5,
+    search_radius_km: LIVE_SEISMIC_RADIUS_KM,
+    count: nearby.length,
+    max_magnitude: strongest?.magnitude || 0,
+    nearest_distance_km: nearest ? round(nearest.distance_km, 1) : null,
+    strongest_event: strongest
+      ? {
+          magnitude: strongest.magnitude,
+          place: strongest.place,
+          time: strongest.time,
+          depth_km: round(strongest.depth_km, 1),
+          distance_km: round(strongest.distance_km, 1),
+        }
+      : null,
+  };
+}
+
+async function enrichBuildingPayload(payload = {}) {
+  const lat = clamp(payload.lat ?? 0, -90, 90);
+  const lng = clamp(payload.lng ?? 0, -180, 180);
+  const enriched = { ...payload };
+  const sources = [];
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return enriched;
+  }
+
+  const [weatherResult, seismicResult] = await Promise.allSettled([
+    fetchLiveWeather(lat, lng),
+    fetchRecentSeismicity(lat, lng),
+  ]);
+
+  if (weatherResult.status === "fulfilled") {
+    enriched.live_weather = weatherResult.value;
+    sources.push({
+      name: "Open-Meteo",
+      type: "current weather",
+      status: "live",
+      observed_at: weatherResult.value.observed_at,
+    });
+  } else {
+    sources.push({
+      name: "Open-Meteo",
+      type: "current weather",
+      status: "unavailable",
+      error: weatherResult.reason?.message || "request failed",
+    });
+  }
+
+  if (seismicResult.status === "fulfilled") {
+    enriched.recent_seismicity = seismicResult.value;
+    sources.push({
+      name: "USGS Earthquake Catalog",
+      type: "recent seismicity",
+      status: "live",
+      lookback_days: seismicResult.value.lookback_days,
+    });
+  } else {
+    sources.push({
+      name: "USGS Earthquake Catalog",
+      type: "recent seismicity",
+      status: "unavailable",
+      error: seismicResult.reason?.message || "request failed",
+    });
+  }
+
+  enriched.live_data_sources = sources;
+  enriched.live_data_checked_at = new Date().toISOString();
+  return enriched;
+}
+
 function riskCategory(score) {
   if (score >= 75) {
     return "CRITICAL";
@@ -238,6 +413,10 @@ function deriveBuildingContext(payload = {}) {
     address,
     areaName,
     assetType,
+    liveWeather: payload.live_weather || null,
+    recentSeismicity: payload.recent_seismicity || null,
+    liveDataSources: payload.live_data_sources || [],
+    liveDataCheckedAt: payload.live_data_checked_at || null,
     estimatedFloors,
     isHighrise,
     slendernessClass: isHighrise ? "slender / high-rise" : isMidrise ? "mid-rise" : "low-rise",
@@ -318,14 +497,99 @@ function climateExposureScore(context) {
   return score;
 }
 
+function liveWeatherExposureScore(context) {
+  const weather = context.liveWeather;
+  if (!weather) {
+    return 0;
+  }
+
+  const windGust = Number(weather.wind_gusts_kph || weather.wind_speed_kph || 0);
+  const rain = Number(weather.precipitation_mm || 0);
+  const humidity = Number(weather.humidity_pct || 0);
+  const temperature = Number(weather.temperature_c || 24);
+  const visibility = Number(weather.visibility_km || 10);
+
+  let score = 0;
+  if (windGust >= 75) score += 5.5;
+  else if (windGust >= 55) score += 3.5;
+  else if (windGust >= 35) score += 1.6;
+
+  if (rain >= 25) score += 4.5;
+  else if (rain >= 10) score += 2.8;
+  else if (rain >= 3) score += 1.2;
+
+  if (temperature >= 42 || temperature <= -5) score += 2.2;
+  else if (temperature >= 36 || temperature <= 5) score += 1.1;
+
+  if (humidity >= 88) score += 1.2;
+  if (visibility > 0 && visibility < 2) score += 1.2;
+
+  return clamp(score, 0, 11);
+}
+
+function recentSeismicityScore(context) {
+  const seismicity = context.recentSeismicity;
+  if (!seismicity) {
+    return 0;
+  }
+
+  const magnitude = Number(seismicity.max_magnitude || 0);
+  const nearestKm = Number(seismicity.nearest_distance_km || 301);
+  const count = Number(seismicity.count || 0);
+
+  let score = 0;
+  if (magnitude >= 6) score += 9;
+  else if (magnitude >= 5) score += 6;
+  else if (magnitude >= 4) score += 3.5;
+  else if (magnitude >= 3) score += 1.4;
+
+  if (nearestKm <= 50) score += 3;
+  else if (nearestKm <= 120) score += 1.8;
+  else if (nearestKm <= 220) score += 0.8;
+
+  if (count >= 8) score += 1.5;
+  else if (count >= 3) score += 0.7;
+
+  return clamp(score, 0, 13);
+}
+
+function liveWeatherSummary(weather) {
+  if (!weather) {
+    return "Live weather was unavailable, so climate exposure is based on location heuristics.";
+  }
+  const parts = [];
+  if (Number.isFinite(weather.temperature_c)) parts.push(`${weather.temperature_c.toFixed(1)}°C`);
+  if (Number.isFinite(weather.wind_gusts_kph)) parts.push(`gusts ${weather.wind_gusts_kph.toFixed(1)} km/h`);
+  if (Number.isFinite(weather.precipitation_mm)) parts.push(`precipitation ${weather.precipitation_mm.toFixed(1)} mm`);
+  if (Number.isFinite(weather.humidity_pct)) parts.push(`humidity ${weather.humidity_pct.toFixed(0)}%`);
+  return parts.length
+    ? `Live Open-Meteo signal reports ${parts.join(", ")}.`
+    : "Live Open-Meteo signal was received, but key weather fields were incomplete.";
+}
+
+function recentSeismicitySummary(seismicity) {
+  if (!seismicity) {
+    return "Recent seismicity was unavailable, so seismic exposure is based on regional heuristics.";
+  }
+  if (!seismicity.count) {
+    return `USGS reports no magnitude ${Number(seismicity.min_magnitude || 4.5).toFixed(1)}+ earthquakes within ${seismicity.search_radius_km} km in the last ${seismicity.lookback_days} days.`;
+  }
+  const event = seismicity.strongest_event;
+  return event
+    ? `USGS recent seismicity found ${seismicity.count} magnitude ${Number(seismicity.min_magnitude || 4.5).toFixed(1)}+ events within ${seismicity.search_radius_km} km over ${seismicity.lookback_days} days; strongest was M${Number(event.magnitude).toFixed(1)} about ${Number(event.distance_km).toFixed(0)} km away near ${event.place}.`
+    : `USGS recent seismicity found ${seismicity.count} nearby events in the last ${seismicity.lookback_days} days.`;
+}
+
 function buildingAnalysis(payload = {}) {
   const context = deriveBuildingContext(payload);
   const regional = regionalHazardScore(context);
   const asset = assetExposureScore(context);
   const heightExposure = heightExposureScore(context);
   const climate = climateExposureScore(context);
+  const liveWeather = liveWeatherExposureScore(context);
+  const recentSeismicity = recentSeismicityScore(context);
   const uncertainty = stableUnitInterval(`${context.address}|${context.lat.toFixed(5)}|${context.lng.toFixed(5)}|${context.height}`) * 2.2;
-  const riskScore = clamp(0.5 + regional + asset + heightExposure + climate + uncertainty, 0.5, 96);
+  const riskScore = clamp(0.5 + regional + recentSeismicity + asset + heightExposure + climate + liveWeather + uncertainty, 0.5, 96);
   const category = riskCategory(riskScore);
   const inspectionPriority = riskScore >= 55
     ? "High-priority engineering review recommended before relying on this asset for critical occupancy or operations"
@@ -334,7 +598,7 @@ function buildingAnalysis(payload = {}) {
       : riskScore >= 10
         ? "Low-risk asset posture; keep routine inspection active and verify basic drainage, facade, and crack observations"
         : "Very low indicative risk; routine observation is sufficient unless field distress is visible";
-  const smartReason = `score drivers: regional ${regional.toFixed(1)}, height ${heightExposure.toFixed(1)}, asset ${asset.toFixed(1)}, climate ${climate.toFixed(1)}, uncertainty ${uncertainty.toFixed(1)}`;
+  const smartReason = `score drivers: regional ${regional.toFixed(1)}, recent seismicity ${recentSeismicity.toFixed(1)}, height ${heightExposure.toFixed(1)}, asset ${asset.toFixed(1)}, climate ${climate.toFixed(1)}, live weather ${liveWeather.toFixed(1)}, uncertainty ${uncertainty.toFixed(1)}`;
   const shortLabel = category.toLowerCase();
 
   const occupancyProfile = riskScore >= 55
@@ -345,19 +609,19 @@ function buildingAnalysis(payload = {}) {
     : "Primary maintenance focus should remain on normal envelope care, drainage checks, minor crack logging, waterproofing, and routine serviceability observations.";
 
   return {
-    summary: `Deep structural scan for ${context.address}. This ${context.assetType} is estimated at ${context.height.toFixed(1)} meters and ${context.estimatedFloors} floors. The calibrated indicative risk is ${riskScore.toFixed(1)}/100 (${shortLabel}) using mapped height, inferred asset type, regional hazard, climate exposure, and location-specific uncertainty.`,
+    summary: `Deep structural scan for ${context.address}. This ${context.assetType} is estimated at ${context.height.toFixed(1)} meters and ${context.estimatedFloors} floors. The calibrated indicative risk is ${riskScore.toFixed(1)}/100 (${shortLabel}) using mapped height, inferred asset type, regional hazard, live public weather/seismic signals when available, climate exposure, and location-specific uncertainty.`,
     asset_specific_findings: `The selected building only was assessed using its mapped footprint, height, coordinates, and localized urban context in ${context.areaName}. The current posture is ${shortLabel}; ${smartReason}. Primary review attention is on ${context.slendernessClass} behavior, load path continuity, and water ingress / facade durability risk.`,
     structural_integrity: `Likely structural system: ${context.likelyStructuralSystem}. Critical stress concentrations would be expected at transfer zones, irregular floor plates, podium transitions, and roof-level service zones. For low scores, this remains a routine verification item rather than an immediate hazard signal.`,
     load_path_and_lateral_system:
       riskScore >= 30
         ? "Lateral demand should be traced through frames, cores, and diaphragm action. Any discontinuity between vertical elements, soft-story behavior, or stiffness irregularity should be treated as a priority inspection target."
         : "No high-risk lateral-system trigger is inferred from the available map data. Keep routine checks focused on visible cracking, additions, soft-story openings, and undocumented alterations.",
-    seismic_vulnerability: `Regional seismic demand around ${context.areaName} contributes ${regional.toFixed(1)} points to the score. The building should be checked for torsional irregularity, drift compatibility, non-structural anchorage, and post-cracking serviceability if field conditions suggest distress or if the building predates current code practice.`,
+    seismic_vulnerability: `Regional seismic demand around ${context.areaName} contributes ${regional.toFixed(1)} points to the score. ${recentSeismicitySummary(context.recentSeismicity)} The building should be checked for torsional irregularity, drift compatibility, non-structural anchorage, and post-cracking serviceability if field conditions suggest distress or if the building predates current code practice.`,
     soil_foundation: `Likely foundation profile: ${context.likelyFoundation}. Settlement, seasonal moisture variation, and buried utility influence remain the main geotechnical uncertainties without survey-grade data.`,
     climate_impact:
       riskScore >= 30
-        ? "Climate exposure should be reviewed for thermal cycling, moisture intrusion, roof drainage overload, and envelope aging. Waterproofing fatigue, sealant failure, and corrosion initiation can materially raise risk if field evidence is present."
-        : "Climate exposure is currently treated as a low-to-routine contributor. Continue drainage, roof, and envelope maintenance so moisture does not become the main degradation path.",
+        ? `${liveWeatherSummary(context.liveWeather)} Climate exposure should be reviewed for thermal cycling, moisture intrusion, roof drainage overload, and envelope aging. Waterproofing fatigue, sealant failure, and corrosion initiation can materially raise risk if field evidence is present.`
+        : `${liveWeatherSummary(context.liveWeather)} Climate exposure is currently treated as a low-to-routine contributor. Continue drainage, roof, and envelope maintenance so moisture does not become the main degradation path.`,
     environmental_hazards:
       "Localized hazards to review include pluvial flooding, drainage congestion, adjacent excavation effects, heat retention, and long-term atmospheric corrosion exposure.",
     serviceability_outlook:
@@ -371,18 +635,23 @@ function buildingAnalysis(payload = {}) {
     operational_exposure: occupancyProfile,
     inspection_priority: inspectionPriority,
     confidence_notes:
-      "This calibrated scan is building-specific but inference-led. It uses map height, asset heuristics, regional hazard, climate exposure, and deterministic location variation; it is not a substitute for drawings, material tests, or on-site structural inspection.",
+      `This calibrated scan is building-specific but inference-led. It uses map height, asset heuristics, regional hazard, climate exposure, deterministic location variation, and live Open-Meteo / USGS signals when available${context.liveDataCheckedAt ? ` checked at ${context.liveDataCheckedAt}` : ""}; it is not a substitute for drawings, material tests, or on-site structural inspection.`,
     data_gaps:
       "Highest-value missing inputs are structural drawings, construction year, retrofit history, material strengths, foundation details, occupancy load regime, crack / corrosion observations, and measured tilt, vibration, or settlement data.",
     estimated_floors: context.estimatedFloors,
     risk_category: category,
     score_drivers: {
       regional_hazard: round(regional, 1),
+      recent_seismicity: round(recentSeismicity, 1),
       height_exposure: round(heightExposure, 1),
       asset_exposure: round(asset, 1),
       climate_exposure: round(climate, 1),
+      live_weather: round(liveWeather, 1),
       uncertainty: round(uncertainty, 1),
     },
+    live_data_sources: context.liveDataSources,
+    live_weather: context.liveWeather,
+    recent_seismicity: context.recentSeismicity,
     recommendations: [
       riskScore >= 30
         ? "Perform a targeted visual condition survey focused on cracks, water ingress, facade distress, and irregular load paths."
@@ -655,6 +924,7 @@ module.exports = {
   SATELLITES,
   analysisResponse,
   buildingAnalysis,
+  enrichBuildingPayload,
   json,
   readJson,
   resilienceResponse,

@@ -5,7 +5,13 @@
 
 const AUTH_CONFIG_ENDPOINT = "/api/auth-config";
 const AUTH_CALLBACK_PATH = "/auth-callback.html";
+const PASSWORD_RESET_PATH = "/forgot-password";
 const DASHBOARD_PATH = "/dashboard";
+const LEGACY_USER_KEY = "sx_user";
+const SECURE_USER_KEY = "sx_user_secure";
+const AUTH_STATE_KEY = "sx_auth_state";
+const SESSION_SECRET_KEY = "sx_session_secret";
+const PBKDF2_ITERATIONS = 210000;
 const GOOGLE_ICON =
   '<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google">';
 
@@ -13,6 +19,97 @@ let supabaseClientPromise = null;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getCrypto() {
+  if (!window.crypto?.subtle) {
+    throw new Error("AES-256 secure storage needs HTTPS and Web Crypto support.");
+  }
+  return window.crypto;
+}
+
+function randomBytes(length) {
+  const bytes = new Uint8Array(length);
+  getCrypto().getRandomValues(bytes);
+  return bytes;
+}
+
+function toBase64(bytes) {
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary);
+}
+
+function fromBase64(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function randomSecret() {
+  return toBase64(randomBytes(32));
+}
+
+async function deriveAesKey(secret, salt) {
+  const crypto = getCrypto();
+  const material = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: "SHA-256",
+    },
+    material,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function saveSecureUser(user, secret, meta = {}) {
+  const crypto = getCrypto();
+  const salt = randomBytes(16);
+  const iv = randomBytes(12);
+  const key = await deriveAesKey(secret, salt);
+  const plaintext = new TextEncoder().encode(JSON.stringify(user));
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext);
+
+  localStorage.setItem(
+    SECURE_USER_KEY,
+    JSON.stringify({
+      v: 1,
+      alg: "AES-256-GCM",
+      kdf: "PBKDF2-SHA256",
+      iterations: PBKDF2_ITERATIONS,
+      salt: toBase64(salt),
+      iv: toBase64(iv),
+      data: toBase64(new Uint8Array(encrypted)),
+      provider: meta.provider || user.provider || "local",
+      createdAt: new Date().toISOString(),
+    })
+  );
+  localStorage.setItem(
+    AUTH_STATE_KEY,
+    JSON.stringify({
+      encrypted: true,
+      provider: meta.provider || user.provider || "local",
+      at: Date.now(),
+    })
+  );
+  localStorage.removeItem(LEGACY_USER_KEY);
+  sessionStorage.setItem(SESSION_SECRET_KEY, secret);
 }
 
 function getSupabaseLibrary() {
@@ -66,7 +163,16 @@ async function getSupabaseClient() {
   return supabaseClientPromise;
 }
 
-function saveUserFromSession(session) {
+async function tryGetSupabaseClient() {
+  try {
+    return await getSupabaseClient();
+  } catch (error) {
+    supabaseClientPromise = null;
+    return null;
+  }
+}
+
+async function saveUserFromSession(session) {
   const user = session && session.user;
   if (!user) {
     throw new Error("Supabase did not return a signed-in user.");
@@ -74,14 +180,15 @@ function saveUserFromSession(session) {
 
   const metadata = user.user_metadata || {};
   const fallbackName = user.email ? user.email.split("@")[0] : "Google User";
-  localStorage.setItem(
-    "sx_user",
-    JSON.stringify({
+  await saveSecureUser(
+    {
       email: user.email || "google-user@structurex.local",
       name: metadata.full_name || metadata.name || fallbackName,
       avatar_url: metadata.avatar_url || metadata.picture || "",
       provider: "google",
-    })
+    },
+    randomSecret(),
+    { provider: "google" }
   );
 }
 
@@ -89,8 +196,33 @@ function getCallbackUrl() {
   return `${window.location.origin}${AUTH_CALLBACK_PATH}`;
 }
 
+function getPasswordResetUrl() {
+  return `${window.location.origin}${PASSWORD_RESET_PATH}`;
+}
+
 function showAuthSuccess(intent) {
   window.alert(intent === "signup" ? "Sign up successful." : "Login successful.");
+}
+
+function setResetStatus(node, message, type = "info") {
+  if (!node) {
+    return;
+  }
+  node.textContent = message;
+  node.className = `reset-status visible ${type}`;
+}
+
+function setInlineButtonLoading(button, text) {
+  if (!button) {
+    return () => {};
+  }
+  const original = button.innerHTML;
+  button.disabled = true;
+  button.innerHTML = `<span>${text}</span><div class="spinner"></div>`;
+  return () => {
+    button.disabled = false;
+    button.innerHTML = original;
+  };
 }
 
 function setGoogleButtonLoading(button) {
@@ -182,7 +314,7 @@ async function finishOAuthCallback() {
       }
 
       if (data && data.session) {
-        saveUserFromSession(data.session);
+        await saveUserFromSession(data.session);
         const intent = localStorage.getItem("sx_auth_intent") || "login";
         localStorage.removeItem("sx_auth_intent");
         setStatus("Opening dashboard...");
@@ -210,7 +342,216 @@ async function finishOAuthCallback() {
   }
 }
 
+function getUrlHashParams() {
+  return new URLSearchParams(window.location.hash.replace(/^#/, ""));
+}
+
+function hasRecoveryLinkData() {
+  const params = new URLSearchParams(window.location.search);
+  const hashParams = getUrlHashParams();
+  return (
+    params.get("type") === "recovery" ||
+    hashParams.get("type") === "recovery" ||
+    params.has("code") ||
+    hashParams.has("access_token")
+  );
+}
+
+async function activateRecoverySession(client, statusNode) {
+  const params = new URLSearchParams(window.location.search);
+  const hashParams = getUrlHashParams();
+  const providerError =
+    params.get("error_description") ||
+    params.get("error") ||
+    hashParams.get("error_description") ||
+    hashParams.get("error");
+  if (providerError) {
+    throw new Error(providerError);
+  }
+
+  const code = params.get("code");
+  if (code) {
+    setResetStatus(statusNode, "Verifying secure reset link...", "info");
+    const { error } = await client.auth.exchangeCodeForSession(code);
+    if (error) {
+      throw error;
+    }
+  }
+
+  const accessToken = hashParams.get("access_token");
+  const refreshToken = hashParams.get("refresh_token");
+  if (accessToken && refreshToken) {
+    setResetStatus(statusNode, "Opening password reset session...", "info");
+    const { error } = await client.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+    if (error) {
+      throw error;
+    }
+  }
+
+  const { data, error } = await client.auth.getSession();
+  if (error) {
+    throw error;
+  }
+  return Boolean(data?.session);
+}
+
+async function initForgotPasswordPage() {
+  if (!document.body.classList.contains("forgot-password-body")) {
+    return false;
+  }
+
+  const requestForm = document.getElementById("forgot-request-form");
+  const updateForm = document.getElementById("forgot-update-form");
+  const forgotStatus = document.getElementById("forgot-status");
+  const resetStatus = document.getElementById("reset-status");
+  const emailInput = document.getElementById("forgot-email");
+  const params = new URLSearchParams(window.location.search);
+  let localResetEmail = "";
+
+  if (!requestForm || !updateForm || !emailInput) {
+    return true;
+  }
+
+  const showRequestForm = () => {
+    requestForm.classList.add("active");
+    updateForm.classList.remove("active");
+  };
+  const showUpdateForm = () => {
+    requestForm.classList.remove("active");
+    updateForm.classList.add("active");
+  };
+
+  if (params.get("email")) {
+    emailInput.value = params.get("email");
+  }
+
+  if (hasRecoveryLinkData()) {
+    try {
+      const client = await getSupabaseClient();
+      const hasSession = await activateRecoverySession(client, resetStatus);
+      if (!hasSession) {
+        throw new Error("This reset link is expired or invalid. Request a new password reset email.");
+      }
+      showUpdateForm();
+      setResetStatus(resetStatus, "Reset link verified. Create a new password.", "success");
+    } catch (error) {
+      console.error("Password recovery link failed:", error);
+      showRequestForm();
+      setResetStatus(forgotStatus, error.message || "The reset link could not be opened. Request a new one.", "error");
+    }
+  }
+
+  requestForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const email = emailInput.value.trim();
+    const button = requestForm.querySelector(".btn-primary");
+    const restoreButton = setInlineButtonLoading(button, "Sending...");
+    localResetEmail = email;
+
+    try {
+      const client = await tryGetSupabaseClient();
+      if (!client) {
+        showUpdateForm();
+        setResetStatus(
+          resetStatus,
+          `Email reset is not configured on this deployment yet. Create a new local password for ${email}.`,
+          "info"
+        );
+        return;
+      }
+      const { error } = await client.auth.resetPasswordForEmail(email, {
+        redirectTo: getPasswordResetUrl(),
+      });
+      if (error) {
+        throw error;
+      }
+      setResetStatus(
+        forgotStatus,
+        "If that email is registered, a secure reset link has been sent. Check inbox and spam.",
+        "success"
+      );
+    } catch (error) {
+      console.error("Password reset request failed:", error);
+      if (/supabase|configured|config/i.test(error.message || "")) {
+        showUpdateForm();
+        setResetStatus(
+          resetStatus,
+          `Email reset is not configured on this deployment yet. Create a new local password for ${email}.`,
+          "info"
+        );
+        return;
+      }
+      setResetStatus(forgotStatus, error.message || "Password reset could not be started. Try again.", "error");
+    } finally {
+      restoreButton();
+    }
+  });
+
+  updateForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const password = document.getElementById("new-password").value;
+    const confirmPassword = document.getElementById("confirm-password").value;
+    const button = updateForm.querySelector(".btn-primary");
+
+    if (password.length < 8) {
+      setResetStatus(resetStatus, "Use at least 8 characters for the new password.", "error");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setResetStatus(resetStatus, "The two passwords do not match.", "error");
+      return;
+    }
+
+    const restoreButton = setInlineButtonLoading(button, "Updating...");
+    try {
+      const client = await tryGetSupabaseClient();
+      if (client) {
+        if (hasRecoveryLinkData()) {
+          await activateRecoverySession(client, resetStatus);
+        }
+        const { data: sessionData, error: sessionError } = await client.auth.getSession();
+        if (sessionError) {
+          throw sessionError;
+        }
+        if (sessionData?.session) {
+          const { error } = await client.auth.updateUser({ password });
+          if (error) {
+            throw error;
+          }
+          await saveUserFromSession(sessionData.session);
+          setResetStatus(resetStatus, "Password updated. Opening dashboard...", "success");
+          window.setTimeout(() => window.location.replace(DASHBOARD_PATH), 900);
+          return;
+        }
+      }
+
+      const email = localResetEmail || emailInput.value.trim() || params.get("email") || "local-user@structurex.local";
+      await saveSecureUser(
+        { email, name: email.split("@")[0] || "User", provider: "local" },
+        `${email}:${password}`,
+        { provider: "local-reset" }
+      );
+      setResetStatus(resetStatus, "Local password reset complete. Opening dashboard...", "success");
+      window.setTimeout(() => window.location.replace(DASHBOARD_PATH), 900);
+    } catch (error) {
+      console.error("Password update failed:", error);
+      setResetStatus(resetStatus, error.message || "Password could not be updated. Request a new reset link.", "error");
+    } finally {
+      restoreButton();
+    }
+  });
+
+  return true;
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
+  if (await initForgotPasswordPage()) {
+    return;
+  }
+
   if (await finishOAuthCallback()) {
     return;
   }
@@ -245,15 +586,23 @@ document.addEventListener("DOMContentLoaded", async () => {
   loginForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const email = document.getElementById("login-email").value;
+    const password = document.getElementById("login-password").value;
     const button = loginForm.querySelector(".btn-primary");
 
     button.disabled = true;
     button.innerHTML = "<span>Authenticating...</span><div class=\"spinner\"></div>";
 
-    setTimeout(() => {
-      localStorage.setItem("sx_user", JSON.stringify({ email, name: "User" }));
-      showAuthSuccess("login");
-      window.location.href = DASHBOARD_PATH;
+    setTimeout(async () => {
+      try {
+        await saveSecureUser({ email, name: email.split("@")[0] || "User", provider: "local" }, `${email}:${password}`, { provider: "local" });
+        showAuthSuccess("login");
+        window.location.href = DASHBOARD_PATH;
+      } catch (error) {
+        console.error("Secure local login failed:", error);
+        window.alert(error.message || "Secure local login failed.");
+        button.disabled = false;
+        button.innerHTML = '<span>Sign In</span><i class="fas fa-arrow-right"></i>';
+      }
     }, 900);
   });
 
@@ -261,15 +610,23 @@ document.addEventListener("DOMContentLoaded", async () => {
     event.preventDefault();
     const name = document.getElementById("signup-name").value;
     const email = document.getElementById("signup-email").value;
+    const password = document.getElementById("signup-password").value;
     const button = signupForm.querySelector(".btn-primary");
 
     button.disabled = true;
     button.innerHTML = "<span>Creating Account...</span><div class=\"spinner\"></div>";
 
-    setTimeout(() => {
-      localStorage.setItem("sx_user", JSON.stringify({ email, name }));
-      showAuthSuccess("signup");
-      window.location.href = DASHBOARD_PATH;
+    setTimeout(async () => {
+      try {
+        await saveSecureUser({ email, name, provider: "local" }, `${email}:${password}`, { provider: "local" });
+        showAuthSuccess("signup");
+        window.location.href = DASHBOARD_PATH;
+      } catch (error) {
+        console.error("Secure local signup failed:", error);
+        window.alert(error.message || "Secure local signup failed.");
+        button.disabled = false;
+        button.innerHTML = '<span>Create Account</span><i class="fas fa-user-plus"></i>';
+      }
     }, 900);
   });
 

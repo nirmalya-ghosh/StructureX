@@ -29,6 +29,10 @@
       "destination": "/auth.html"
     },
     {
+      "source": "/forgot-password",
+      "destination": "/forgot-password.html"
+    },
+    {
       "source": "/dashboard",
       "destination": "/index.html"
     }

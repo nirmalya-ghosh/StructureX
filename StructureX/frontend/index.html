@@ -29,7 +29,7 @@
                 return;
             }
 
-            const user = localStorage.getItem('sx_user');
+            const user = localStorage.getItem('sx_user_secure') || localStorage.getItem('sx_auth_state') || localStorage.getItem('sx_user');
             if (!user && !window.location.pathname.includes('login')) {
                 window.location.href = '/login';
             }
@@ -82,12 +82,17 @@
                 <div class="v-menu-header">VOICE CONTROL</div>
                 <button id="nav-read-btn"><i class="fas fa-volume-up"></i> Full Report</button>
                 <button id="nav-summarize-btn"><i class="fas fa-bolt"></i> Summarize</button>
+                <button id="nav-translate-btn"><i class="fas fa-language"></i> Translate Summary</button>
                 <button id="nav-listen-btn"><i class="fas fa-ear-listen"></i> Start Live Listening</button>
                 <div class="voice-command-panel" id="voice-command-panel">
                     <div class="voice-command-status" id="voice-command-status">Voice standby</div>
                     <div class="voice-command-transcript" id="voice-command-transcript">No command heard yet</div>
                 </div>
                 
+                <div class="v-menu-divider"></div>
+                <div class="v-menu-label">COMMAND & VOICE LANGUAGE</div>
+                <select id="v-language-select" class="v-select"></select>
+
                 <div class="v-menu-divider"></div>
                 <div class="v-menu-label">AI VOICE</div>
                 <select id="v-voice-select" class="v-select"></select>
@@ -196,7 +201,7 @@
                     </div>
                     <div class="up-account-row">
                         <span class="up-account-label">Security</span>
-                        <span class="up-account-value up-security-badge"><i class="fas fa-lock"></i> AES-256</span>
+                        <span class="up-account-value up-security-badge"><i class="fas fa-lock"></i> AES-256-GCM</span>
                     </div>
                 </div>
 
@@ -638,7 +643,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=34" defer></script>
+    <script src="/static/app.js?v=35" defer></script>
     <!-- Mobile Drawer Override Script -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {

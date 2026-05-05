@@ -1,4 +1,4 @@
-const { buildingAnalysis, json, readJson } = require("./_structurex-data");
+const { buildingAnalysis, enrichBuildingPayload, json, readJson } = require("./_structurex-data");
 
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
@@ -6,5 +6,6 @@ module.exports = async function handler(req, res) {
   }
 
   const body = await readJson(req);
-  return json(res, buildingAnalysis(body));
+  const enrichedBody = await enrichBuildingPayload(body);
+  return json(res, buildingAnalysis(enrichedBody));
 };

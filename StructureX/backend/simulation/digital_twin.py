@@ -14,6 +14,7 @@ Physics Models:
 
 import numpy as np
 import pandas as pd
+import zlib
 from typing import Optional
 
 import sys
@@ -128,6 +129,17 @@ def compute_fatigue(loads: np.ndarray) -> np.ndarray:
     return fatigue
 
 
+def stable_location_seed(seed: int, location_id: str) -> int:
+    """
+    Derive a reproducible per-location seed.
+
+    Python's built-in hash() is randomized between processes, which makes model
+    training drift between runs even when RANDOM_SEED is fixed.
+    """
+    location_hash = zlib.crc32(str(location_id).encode("utf-8")) % 10000
+    return int(seed + location_hash)
+
+
 def simulate_structure(
     unified_df: pd.DataFrame,
     seed: int = RANDOM_SEED,
@@ -161,7 +173,7 @@ def simulate_structure(
         n = len(loc_data)
 
         # Per-location RNG for independence
-        loc_rng = np.random.default_rng(seed + hash(loc_id) % 10000)
+        loc_rng = np.random.default_rng(stable_location_seed(seed, loc_id))
 
         loads = np.zeros(n)
         vibrations = np.zeros(n)

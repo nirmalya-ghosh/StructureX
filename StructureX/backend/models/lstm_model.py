@@ -143,8 +143,8 @@ class TimeSeriesPredictor:
         X, y_f, y_d = [], [], []
         for i in range(n - window_size):
             X.append(data[i : i + window_size])
-            y_f.append(failure_labels[i + window_size - 1])
-            y_d.append(degradation_labels[i + window_size - 1])
+            y_f.append(failure_labels[i + window_size])
+            y_d.append(degradation_labels[i + window_size])
 
         return (
             np.array(X, dtype=np.float32),

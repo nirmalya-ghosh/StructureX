@@ -4880,6 +4880,12 @@ const userProfile = {
     isProfileOpen: false,
 };
 
+const LEGACY_USER_KEY = "sx_user";
+const SECURE_USER_KEY = "sx_user_secure";
+const AUTH_STATE_KEY = "sx_auth_state";
+const SESSION_SECRET_KEY = "sx_session_secret";
+let currentSecureUser = null;
+
 function closeUserProfilePanel() {
     const profilePanel = $('#user-profile-panel');
     if (profilePanel) {
@@ -4888,19 +4894,86 @@ function closeUserProfilePanel() {
     userProfile.isProfileOpen = false;
 }
 
-function initAuth() {
-    const userJson = localStorage.getItem('sx_user');
-    let user = { email: 'user@structurex.io', name: 'User' };
+function fromBase64(value) {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+}
 
-    if (userJson) {
-        try {
-            user = JSON.parse(userJson);
-        } catch (e) {
-            console.error("Failed to parse user session", e);
-        }
+async function deriveStoredAesKey(secret, salt, iterations) {
+    if (!window.crypto?.subtle) {
+        throw new Error("Web Crypto unavailable");
+    }
+    const material = await window.crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(secret),
+        "PBKDF2",
+        false,
+        ["deriveKey"]
+    );
+    return window.crypto.subtle.deriveKey(
+        {
+            name: "PBKDF2",
+            salt,
+            iterations: Number(iterations || 210000),
+            hash: "SHA-256",
+        },
+        material,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["decrypt"]
+    );
+}
+
+async function readSecureUser() {
+    const stored = localStorage.getItem(SECURE_USER_KEY);
+    const secret = sessionStorage.getItem(SESSION_SECRET_KEY);
+    if (!stored || !secret) {
+        return null;
     }
 
-    const displayName = user.name || user.email.split('@')[0];
+    const payload = JSON.parse(stored);
+    const key = await deriveStoredAesKey(secret, fromBase64(payload.salt), payload.iterations);
+    const decrypted = await window.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: fromBase64(payload.iv) },
+        key,
+        fromBase64(payload.data)
+    );
+    return JSON.parse(new TextDecoder().decode(decrypted));
+}
+
+function readLegacyUser() {
+    try {
+        return JSON.parse(localStorage.getItem(LEGACY_USER_KEY) || "{}");
+    } catch {
+        return {};
+    }
+}
+
+async function initAuth() {
+    let user = { email: 'user@structurex.io', name: 'User' };
+
+    if (localStorage.getItem(SECURE_USER_KEY) && !sessionStorage.getItem(SESSION_SECRET_KEY) && !localStorage.getItem(LEGACY_USER_KEY)) {
+        localStorage.removeItem(AUTH_STATE_KEY);
+        window.location.href = '/login';
+        return;
+    }
+
+    try {
+        const secureUser = await readSecureUser();
+        const legacyUser = readLegacyUser();
+        user = secureUser || (legacyUser.email || legacyUser.name ? legacyUser : user);
+    } catch (e) {
+        console.error("Failed to decrypt secure user session", e);
+        const legacyUser = readLegacyUser();
+        user = legacyUser.email || legacyUser.name ? legacyUser : user;
+    }
+    currentSecureUser = user;
+
+    const displayName = user.name || (user.email || 'user@structurex.io').split('@')[0];
 
     // Populate header capsule
     const nameDisplay = $('#display-user-name');
@@ -4932,6 +5005,14 @@ function initAuth() {
 
     const totalTime = $('#up-total-time');
     if (totalTime) totalTime.textContent = formatDuration(stats.totalSeconds || 0);
+
+    const securityBadge = $('.up-security-badge');
+    if (securityBadge) {
+        const isEncrypted = Boolean(localStorage.getItem(SECURE_USER_KEY));
+        securityBadge.innerHTML = isEncrypted
+            ? '<i class="fas fa-lock"></i> AES-256-GCM active'
+            : '<i class="fas fa-triangle-exclamation"></i> Legacy local session';
+    }
 
     // Start session timer
     userProfile.sessionTimer = setInterval(updateSessionTimer, 1000);
@@ -5102,11 +5183,7 @@ function trackSearch(query) {
 }
 
 function readStoredUser() {
-    try {
-        return JSON.parse(localStorage.getItem('sx_user') || '{}');
-    } catch {
-        return {};
-    }
+    return currentSecureUser || readLegacyUser();
 }
 
 function markdownCell(value) {
@@ -5220,8 +5297,7 @@ function initProfileActions() {
 
         exportBtn.addEventListener('click', () => {
             const elapsed = Math.floor((Date.now() - userProfile.sessionStart) / 1000);
-            const userJson = localStorage.getItem('sx_user');
-            const user = userJson ? JSON.parse(userJson) : { name: 'User', email: 'unknown' };
+            const user = readStoredUser();
             
             let report = `STRUCTUREX SESSION REPORT\n`;
             report += `${'═'.repeat(40)}\n\n`;
@@ -5313,7 +5389,10 @@ function handleLogout() {
     clearInterval(userProfile.sessionTimer);
 
     setTimeout(() => {
-        localStorage.removeItem('sx_user');
+        localStorage.removeItem(LEGACY_USER_KEY);
+        localStorage.removeItem(SECURE_USER_KEY);
+        localStorage.removeItem(AUTH_STATE_KEY);
+        sessionStorage.removeItem(SESSION_SECRET_KEY);
         window.location.href = '/login';
     }, 600);
 }
@@ -5329,10 +5408,15 @@ function initVoiceAssistant() {
     const navVoiceMenu = document.getElementById('nav-voice-menu');
     const navReadBtn = document.getElementById('nav-read-btn');
     const navSummarizeBtn = document.getElementById('nav-summarize-btn');
+    const navTranslateBtn = document.getElementById('nav-translate-btn');
     const navListenBtn = document.getElementById('nav-listen-btn');
     const voiceCommandStatus = document.getElementById('voice-command-status');
     const voiceCommandTranscript = document.getElementById('voice-command-transcript');
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const voiceLangSelect = document.getElementById('v-language-select');
+    const voiceSelect = document.getElementById('v-voice-select');
+    const rateSlider = document.getElementById('v-rate-slider');
+    const pitchSlider = document.getElementById('v-pitch-slider');
     
     // Updated Status Panel controls
     const statusPanel = document.getElementById('voice-status-panel');
@@ -5358,6 +5442,28 @@ function initVoiceAssistant() {
     let lastVoiceCommand = "";
     let lastVoiceCommandAt = 0;
     let pendingVoiceAnalysisNarration = false;
+    let speechGenerationId = 0;
+    let availableVoices = [];
+    const WAKE_WINDOW_MS = 30000;
+    const LANGUAGE_OPTIONS = [
+        ["en-US", "English"], ["en-GB", "English UK"],
+        ["hi-IN", "Hindi"], ["bn-IN", "Bengali"], ["ta-IN", "Tamil"], ["te-IN", "Telugu"], ["mr-IN", "Marathi"], ["gu-IN", "Gujarati"], ["kn-IN", "Kannada"], ["ml-IN", "Malayalam"], ["pa-IN", "Punjabi"], ["ur-IN", "Urdu"], ["od-IN", "Odia"], ["ne-NP", "Nepali"], ["si-LK", "Sinhala"],
+        ["es-ES", "Spanish"], ["es-MX", "Spanish Mexico"], ["fr-FR", "French"], ["de-DE", "German"], ["it-IT", "Italian"], ["pt-BR", "Portuguese"], ["pt-PT", "Portuguese Portugal"], ["nl-NL", "Dutch"], ["sv-SE", "Swedish"], ["da-DK", "Danish"], ["fi-FI", "Finnish"], ["no-NO", "Norwegian"],
+        ["pl-PL", "Polish"], ["cs-CZ", "Czech"], ["sk-SK", "Slovak"], ["hu-HU", "Hungarian"], ["ro-RO", "Romanian"], ["bg-BG", "Bulgarian"], ["el-GR", "Greek"], ["ru-RU", "Russian"], ["uk-UA", "Ukrainian"], ["tr-TR", "Turkish"],
+        ["ar-SA", "Arabic"], ["he-IL", "Hebrew"], ["fa-IR", "Persian"], ["zh-CN", "Chinese Simplified"], ["zh-TW", "Chinese Traditional"], ["ja-JP", "Japanese"], ["ko-KR", "Korean"], ["id-ID", "Indonesian"], ["ms-MY", "Malay"], ["th-TH", "Thai"], ["vi-VN", "Vietnamese"], ["fil-PH", "Filipino"],
+        ["sw-KE", "Swahili"], ["af-ZA", "Afrikaans"], ["am-ET", "Amharic"], ["zu-ZA", "Zulu"],
+    ];
+    const LANGUAGE_ALIASES = {
+        arabic: "ar-SA", bengali: "bn-IN", bangla: "bn-IN", chinese: "zh-CN", mandarin: "zh-CN", "traditional chinese": "zh-TW",
+        czech: "cs-CZ", danish: "da-DK", dutch: "nl-NL", english: "en-US", "british english": "en-GB", filipino: "fil-PH",
+        french: "fr-FR", german: "de-DE", greek: "el-GR", gujarati: "gu-IN", hebrew: "he-IL", hindi: "hi-IN", hungarian: "hu-HU",
+        indonesian: "id-ID", italian: "it-IT", japanese: "ja-JP", kannada: "kn-IN", korean: "ko-KR", malay: "ms-MY", malayalam: "ml-IN",
+        marathi: "mr-IN", nepali: "ne-NP", odia: "od-IN", oriya: "od-IN", persian: "fa-IR", farsi: "fa-IR", polish: "pl-PL",
+        portuguese: "pt-BR", punjabi: "pa-IN", romanian: "ro-RO", russian: "ru-RU", sinhala: "si-LK", spanish: "es-ES",
+        swahili: "sw-KE", tamil: "ta-IN", telugu: "te-IN", thai: "th-TH", turkish: "tr-TR", ukrainian: "uk-UA", urdu: "ur-IN",
+        vietnamese: "vi-VN", zulu: "zu-ZA",
+    };
+    let selectedVoiceLanguage = localStorage.getItem("sx_voice_language") || navigator.language || "en-US";
 
     function positionNavVoiceMenu() {
         if (!navVoiceBtn || !navVoiceMenu) return;
@@ -5404,6 +5510,198 @@ function initVoiceAssistant() {
             : '<i class="fas fa-ear-listen"></i> Start Live Listening';
     }
 
+    function languageBase(code) {
+        return String(code || "en").split("-")[0].toLowerCase();
+    }
+
+    function normalizeLanguageToken(value) {
+        return String(value || "")
+            .toLowerCase()
+            .replace(/[^a-z0-9\s-]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    function resolveLanguageChoice(value) {
+        const token = normalizeLanguageToken(value);
+        if (!token) {
+            return null;
+        }
+
+        const compact = token.replace(/\s+/g, "-");
+        const aliasCode = LANGUAGE_ALIASES[token] || LANGUAGE_ALIASES[compact];
+        const match = LANGUAGE_OPTIONS.find(([code, label]) => {
+            const lowerCode = code.toLowerCase();
+            const lowerBase = languageBase(code);
+            const lowerLabel = normalizeLanguageToken(label);
+            return lowerCode === compact || lowerBase === token || lowerLabel === token || token.endsWith(` ${lowerLabel}`);
+        }) || (aliasCode ? LANGUAGE_OPTIONS.find(([code]) => code === aliasCode) : null);
+
+        if (!match) {
+            return null;
+        }
+        return { code: match[0], label: match[1] };
+    }
+
+    function extractLanguageChoice(command) {
+        if (!/\b(language|translate|translation|speak|read|voice)\b/.test(command)) {
+            return null;
+        }
+        const cleaned = command
+            .replace(/\b(change|switch|set|use|select|make|my|the|command|voice|language|translate|translation|speak|read|say|it|this|summary|report|to|in|into|please|now)\b/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+        return resolveLanguageChoice(cleaned) || resolveLanguageChoice(command);
+    }
+
+    function ensureLanguageOption(language) {
+        if (!voiceLangSelect || !language) {
+            return;
+        }
+        const exists = Array.from(voiceLangSelect.options).some((option) => option.value === language);
+        if (!exists) {
+            const option = document.createElement("option");
+            option.value = language;
+            option.textContent = `Custom (${language})`;
+            voiceLangSelect.appendChild(option);
+        }
+    }
+
+    function populateLanguageSelect() {
+        if (!voiceLangSelect) {
+            return;
+        }
+        const browserLang = navigator.language || "en-US";
+        const options = new Map([[browserLang, `Browser default (${browserLang})`]]);
+        LANGUAGE_OPTIONS.forEach(([code, label]) => options.set(code, label));
+        if (selectedVoiceLanguage && !options.has(selectedVoiceLanguage)) {
+            options.set(selectedVoiceLanguage, `Custom (${selectedVoiceLanguage})`);
+        }
+        voiceLangSelect.innerHTML = "";
+        options.forEach((label, code) => {
+            const option = document.createElement("option");
+            option.value = code;
+            option.textContent = `${label} (${code})`;
+            voiceLangSelect.appendChild(option);
+        });
+        const hasSaved = Array.from(voiceLangSelect.options).some((option) => option.value === selectedVoiceLanguage);
+        voiceLangSelect.value = hasSaved ? selectedVoiceLanguage : browserLang;
+        selectedVoiceLanguage = voiceLangSelect.value;
+        localStorage.setItem("sx_voice_language", selectedVoiceLanguage);
+    }
+
+    function findVoiceIndexForLanguage(lang) {
+        const base = languageBase(lang);
+        let index = availableVoices.findIndex((voice) => voice.lang?.toLowerCase() === String(lang).toLowerCase());
+        if (index >= 0) return index;
+        index = availableVoices.findIndex((voice) => languageBase(voice.lang) === base);
+        if (index >= 0) return index;
+        return -1;
+    }
+
+    function chooseBestVoiceForLanguage(force = false) {
+        if (!voiceSelect || !availableVoices.length) {
+            return;
+        }
+        const currentVoice = availableVoices[Number(voiceSelect.value)];
+        if (!force && currentVoice && languageBase(currentVoice.lang) === languageBase(selectedVoiceLanguage)) {
+            return;
+        }
+        const index = findVoiceIndexForLanguage(selectedVoiceLanguage);
+        if (index >= 0) {
+            voiceSelect.value = String(index);
+            localStorage.setItem("sx_voice_uri", availableVoices[index].voiceURI || "");
+        }
+    }
+
+    function applyVoiceLanguage(language, { announce = false } = {}) {
+        selectedVoiceLanguage = language || "en-US";
+        localStorage.setItem("sx_voice_language", selectedVoiceLanguage);
+        ensureLanguageOption(selectedVoiceLanguage);
+        if (voiceLangSelect) {
+            voiceLangSelect.value = selectedVoiceLanguage;
+        }
+        if (recognition) {
+            recognition.lang = selectedVoiceLanguage;
+        }
+        chooseBestVoiceForLanguage(true);
+        const label = resolveLanguageChoice(selectedVoiceLanguage)?.label || selectedVoiceLanguage;
+        setVoiceCommandStatus("Language set", `${label} (${selectedVoiceLanguage})`);
+        if (commandListening && recognitionRunning) {
+            try {
+                recognition.stop();
+            } catch (error) {
+                console.warn("Voice language restart skipped", error);
+            }
+        }
+        if (announce) {
+            speakText(`Voice language set to ${label}.`);
+        }
+    }
+
+    async function translateText(text, targetLanguage, sourceLanguage = "auto") {
+        const cleanText = String(text || "").trim();
+        const target = languageBase(targetLanguage);
+        const source = sourceLanguage === "auto" ? "auto" : languageBase(sourceLanguage);
+        if (!cleanText || target === source || (target === "en" && source === "en")) {
+            return cleanText;
+        }
+
+        const url = new URL("https://translate.googleapis.com/translate_a/single");
+        url.searchParams.set("client", "gtx");
+        url.searchParams.set("sl", source);
+        url.searchParams.set("tl", target);
+        url.searchParams.set("dt", "t");
+        url.searchParams.set("q", cleanText);
+
+        const response = await fetch(url.toString());
+        if (!response.ok) {
+            throw new Error(`Translation failed (${response.status})`);
+        }
+        const payload = await response.json();
+        const translated = Array.isArray(payload?.[0])
+            ? payload[0].map((item) => item?.[0] || "").join("")
+            : "";
+        return translated || cleanText;
+    }
+
+    async function translateTranscriptForCommand(transcript) {
+        if (languageBase(selectedVoiceLanguage) === "en") {
+            return transcript;
+        }
+        try {
+            return await translateText(transcript, "en", selectedVoiceLanguage);
+        } catch (error) {
+            console.warn("Command translation skipped", error);
+            return transcript;
+        }
+    }
+
+    async function translateSegmentsForSpeech(segments) {
+        const normalized = (Array.isArray(segments) ? segments : [segments])
+            .map((segment) => String(segment || "").trim())
+            .filter(Boolean);
+        if (!normalized.length || languageBase(selectedVoiceLanguage) === "en") {
+            return normalized;
+        }
+        try {
+            const translated = await translateText(normalized.join("\n"), selectedVoiceLanguage);
+            return translated.match(/[^.!?\n]+[.!?]+/g) || translated.split(/\n+/).filter(Boolean) || normalized;
+        } catch (error) {
+            console.warn("Speech translation skipped", error);
+            setVoiceCommandStatus("Translation unavailable", "Speaking original text");
+            return normalized;
+        }
+    }
+
+    function setWakeWindow() {
+        commandHotUntil = Date.now() + WAKE_WINDOW_MS;
+    }
+
+    function isWakeWindowOpen() {
+        return Date.now() <= commandHotUntil;
+    }
+
     function getRecognition() {
         if (!SpeechRecognition) {
             return null;
@@ -5415,12 +5713,12 @@ function initVoiceAssistant() {
         recognition = new SpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true;
-        recognition.lang = navigator.language || "en-US";
+        recognition.lang = selectedVoiceLanguage || navigator.language || "en-US";
 
         recognition.onstart = () => {
             recognitionRunning = true;
             navVoiceBtn?.classList.add("listening");
-            setVoiceCommandStatus("Listening", voiceCommandTranscript?.textContent || "Ready");
+            setVoiceCommandStatus("Wake listening", voiceCommandTranscript?.textContent || "Say Hey StructureX");
             updateListenButton();
         };
 
@@ -5448,7 +5746,7 @@ function initVoiceAssistant() {
                 return;
             }
             if (commandListening && !recognitionSuspendedForSpeech) {
-                setVoiceCommandStatus("Listening", "Reconnecting voice input...");
+                setVoiceCommandStatus("Wake listening", "Reconnecting voice input...");
             }
         };
 
@@ -5487,7 +5785,7 @@ function initVoiceAssistant() {
 
         commandListening = true;
         recognitionSuspendedForSpeech = false;
-        setVoiceCommandStatus("Starting", "Requesting microphone...");
+        setVoiceCommandStatus("Wake listening", "Say Hey StructureX");
         updateListenButton();
         if (!recognitionRunning) {
             try {
@@ -5497,7 +5795,7 @@ function initVoiceAssistant() {
             }
         }
         if (announce) {
-            speakText("Voice command mode is online.");
+            speakText("Wake listening is on. Say Hey StructureX before a command.");
         }
     }
 
@@ -5552,34 +5850,16 @@ function initVoiceAssistant() {
         restartVoiceRecognitionSoon(320);
     }
 
-    function startListeningIfMicrophoneAlreadyAllowed() {
-        if (!SpeechRecognition || !navigator.permissions?.query) {
-            return;
-        }
-        navigator.permissions.query({ name: "microphone" })
-            .then((permissionStatus) => {
-                if (permissionStatus.state === "granted" && !commandListening) {
-                    window.setTimeout(() => startVoiceCommandListening({ announce: false }), 700);
-                }
-                permissionStatus.onchange = () => {
-                    if (permissionStatus.state === "granted" && !commandListening) {
-                        startVoiceCommandListening({ announce: false });
-                    }
-                };
-            })
-            .catch(() => {
-                // Some browsers expose SpeechRecognition but not microphone permission state.
-            });
-    }
-
-    function processVoiceTranscript(transcript) {
-        const parsed = parseVoiceCommand(transcript);
-        const normalized = normalizeVoiceCommand(transcript);
+    async function processVoiceTranscript(transcript) {
+        const commandText = await translateTranscriptForCommand(transcript);
+        const parsed = parseVoiceCommand(commandText);
+        const normalized = normalizeVoiceCommand(commandText);
         const now = Date.now();
-        setVoiceCommandStatus("Heard", transcript);
         if (!parsed) {
+            setVoiceCommandStatus("Wake listening", "Say Hey StructureX");
             return;
         }
+        setVoiceCommandStatus("Heard", commandText === transcript ? transcript : `${transcript} -> ${commandText}`);
         if (isSpeakingSequence && parsed.intent !== "stop_speaking" && parsed.intent !== "stop_listening") {
             return;
         }
@@ -5597,7 +5877,7 @@ function initVoiceAssistant() {
             return null;
         }
 
-        const wakePhrases = ["hey structurex", "ok structurex", "hello structurex", "structurex"];
+        const wakePhrases = ["hey structurex", "ok structurex", "hello structurex"];
         let command = normalized;
         let hasWake = false;
         for (const phrase of wakePhrases) {
@@ -5605,13 +5885,13 @@ function initVoiceAssistant() {
             if (index >= 0) {
                 command = normalized.slice(index + phrase.length).trim();
                 hasWake = true;
-                commandHotUntil = Date.now() + 30000;
+                setWakeWindow();
                 break;
             }
         }
 
         const isInterrupt = isVoiceInterruptCommand(command);
-        if (!hasWake && !isInterrupt && Date.now() > commandHotUntil && !looksLikeDirectVoiceCommand(command)) {
+        if (!hasWake && !isInterrupt && !isWakeWindowOpen()) {
             return null;
         }
 
@@ -5626,8 +5906,15 @@ function initVoiceAssistant() {
         if (isVoiceInterruptCommand(command)) {
             return { intent: "stop_speaking" };
         }
+        const languageChoice = extractLanguageChoice(command);
+        if (languageChoice) {
+            return { intent: "change_language", language: languageChoice.code, label: languageChoice.label };
+        }
         if (/\b(change|switch|set|use|next|different)\b.*\bvoice\b|\bvoice\b.*\b(change|switch|different|next)\b/.test(command)) {
             return { intent: "change_voice", preference: extractVoicePreference(command) };
+        }
+        if (/\b(translate|translation)\b.*\b(summary|summarize|summarise|report|this)\b/.test(command)) {
+            return { intent: "summarize" };
         }
         if (/\b(my location|current location|live location|open location|where am i)\b/.test(command)) {
             return { intent: "location" };
@@ -5645,6 +5932,9 @@ function initVoiceAssistant() {
         }
         if (/\b(summary|summarize|summarise|tell me this|what is this|explain this)\b/.test(command)) {
             return { intent: "summarize" };
+        }
+        if (/\b(this|selected|highlighted|current)\b.*\b(building|structure|asset|one)\b|\b(scan|inspect|review|analyze|analyse)\s+(this|selected|highlighted|current)\b/.test(command)) {
+            return { intent: "analyze_selected" };
         }
 
         const wantsAnalysis = /\b(analyze|analyse|scan|inspect|review|select|choose|building|structure)\b/.test(command);
@@ -5671,10 +5961,6 @@ function initVoiceAssistant() {
             .trim();
     }
 
-    function looksLikeDirectVoiceCommand(command) {
-        return /\b(search|find|show|open|go to|navigate|locate|select|analyze|analyse|scan|inspect|review|summarize|summarise|tell me|where is|what is|stop|cut|quiet|cancel)\b/.test(command);
-    }
-
     function isVoiceInterruptCommand(command) {
         return /\b(stop|stop talking|quiet|cancel|cancel speech|stop speaking|cut|cut it|shut up|enough)\b/.test(command);
     }
@@ -5697,13 +5983,14 @@ function initVoiceAssistant() {
 
     function extractVoicePlaceQuery(command) {
         let query = command
+            .replace(/\b(this building|this structure|this asset|selected building|selected structure|selected asset|highlighted building|current building|current structure|current asset|scan this|analyze this|analyse this|inspect this|review this)\b/g, " ")
             .replace(/\b(search for|search|find|show me|show|open|go to|navigate to|take me to|locate|look up)\b/g, " ")
             .replace(/\b(select|choose|analyze|analyse|scan|inspect|review)\b/g, " ")
             .replace(/\b(tell me about|tell me|what is|where is)\b/g, " ")
             .replace(/\b(weather|temperature|wind|rain|humidity|climate|earthquake|quake|seismic|scenario risk|risk level|risk score|hazard|risk)\b/g, " ")
             .replace(/\b(please|just|near me|nearby|nearest|closest|now)\b/g, " ")
-            .replace(/\b(building|structure|area|city|town|village|place|in|at|near|around)\b/g, " ")
             .replace(/\b(this building|this area|this place|current area|current place)\b/g, " ")
+            .replace(/\b(building|structure|area|city|town|village|place|in|at|near|around)\b/g, " ")
             .replace(/\s+/g, " ")
             .trim();
 
@@ -5712,7 +5999,7 @@ function initVoiceAssistant() {
     }
 
     async function executeVoiceCommand(command) {
-        commandHotUntil = Date.now() + 30000;
+        setWakeWindow();
         if (command.intent === "ready") {
             setVoiceCommandStatus("Ready", "Waiting for command");
             speakText("Ready.");
@@ -5734,6 +6021,10 @@ function initVoiceAssistant() {
         }
         if (command.intent === "change_voice") {
             await changeAssistantVoice(command.preference);
+            return;
+        }
+        if (command.intent === "change_language") {
+            applyVoiceLanguage(command.language, { announce: true });
             return;
         }
         if (command.intent === "weather") {
@@ -5762,6 +6053,10 @@ function initVoiceAssistant() {
         }
         if (command.intent === "search_place" || command.intent === "analyze_place") {
             await runVoicePlaceCommand(command.query, { analyze: command.intent === "analyze_place" });
+            return;
+        }
+        if (command.intent === "analyze_selected") {
+            await analyzeSelectedBuilding();
             return;
         }
         if (command.intent === "analyze_center") {
@@ -5836,12 +6131,24 @@ function initVoiceAssistant() {
         }
     }
 
+    async function analyzeSelectedBuilding() {
+        if (!state.selectedBuilding?.feature || !state.selectedBuilding?.lngLat) {
+            speakText("Select or highlight one building first, then say Hey StructureX, scan this building.");
+            return;
+        }
+        const lngLat = state.selectedBuilding.lngLat;
+        const point = state.map?.project ? state.map.project([lngLat.lng, lngLat.lat]) : null;
+        pendingVoiceAnalysisNarration = true;
+        analyzeBuilding(state.selectedBuilding.feature, lngLat, point);
+        speakText(`Scanning only the selected building: ${state.selectedBuilding.label || "the highlighted structure"}.`);
+    }
+
     async function analyzeNearestBuildingAtMapCenter() {
         if (!state.mapReady || !state.map) {
             speakText("The map is still loading.");
             return;
         }
-        if (state.selectedBuilding?.previewOnly && state.selectedBuilding.feature && state.selectedBuilding.lngLat) {
+        if (state.selectedBuilding?.feature && state.selectedBuilding.lngLat) {
             const point = state.map.project([state.selectedBuilding.lngLat.lng, state.selectedBuilding.lngLat.lat]);
             pendingVoiceAnalysisNarration = true;
             analyzeBuilding(state.selectedBuilding.feature, state.selectedBuilding.lngLat, point);
@@ -6157,6 +6464,20 @@ function initVoiceAssistant() {
 
         voiceSelect.value = String(targetIndex);
         const selectedVoice = availableVoices[targetIndex];
+        if (selectedVoice?.voiceURI) {
+            localStorage.setItem("sx_voice_uri", selectedVoice.voiceURI);
+        }
+        if (selectedVoice?.lang) {
+            selectedVoiceLanguage = selectedVoice.lang;
+            localStorage.setItem("sx_voice_language", selectedVoiceLanguage);
+            ensureLanguageOption(selectedVoiceLanguage);
+            if (voiceLangSelect) {
+                voiceLangSelect.value = selectedVoiceLanguage;
+            }
+            if (recognition) {
+                recognition.lang = selectedVoiceLanguage;
+            }
+        }
         const readableName = selectedVoice?.name?.replace(/Microsoft|Google/gi, "").replace(/\s+/g, " ").trim() || "the next voice";
         setVoiceCommandStatus("Voice changed", readableName);
         speakText(`Voice changed to ${readableName}.`);
@@ -6287,6 +6608,16 @@ function initVoiceAssistant() {
         });
     }
 
+    if (navTranslateBtn) {
+        navTranslateBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeNavVoiceMenu();
+            setVoiceCommandStatus("Translating", selectedVoiceLanguage);
+            const segments = getTextSegments('summarize');
+            speakSequence(segments);
+        });
+    }
+
     document.addEventListener('click', () => {
         if (navVoiceMenu) {
             closeNavVoiceMenu();
@@ -6349,22 +6680,21 @@ function initVoiceAssistant() {
         return cleanText.match(/[^.!?]+[.!?]+/g) || [cleanText];
     }
 
-    const voiceSelect = document.getElementById('v-voice-select');
-    const rateSlider = document.getElementById('v-rate-slider');
-    const pitchSlider = document.getElementById('v-pitch-slider');
-
     // Pre-load voices and populate select
-    let availableVoices = [];
     function loadVoices() { 
-        const newVoices = synth.getVoices();
+        const newVoices = synth?.getVoices?.() || [];
         if (newVoices.length === 0) return;
         
         // Only repopulate if voice count changed to avoid flickering/selection loss
-        if (newVoices.length === availableVoices.length && voiceSelect.options.length > 0) return;
+        if (voiceSelect && newVoices.length === availableVoices.length && voiceSelect.options.length > 0) {
+            chooseBestVoiceForLanguage(false);
+            return;
+        }
         
         availableVoices = newVoices;
         if (voiceSelect) {
             const currentVal = voiceSelect.value;
+            const savedVoiceUri = localStorage.getItem("sx_voice_uri");
             voiceSelect.innerHTML = ''; 
             
             availableVoices.forEach((voice, i) => {
@@ -6374,13 +6704,46 @@ function initVoiceAssistant() {
                 voiceSelect.appendChild(option);
             });
             
-            if (currentVal && availableVoices[currentVal]) {
+            const currentVoice = availableVoices[Number(currentVal)];
+            const savedVoiceIndex = savedVoiceUri
+                ? availableVoices.findIndex((voice) => voice.voiceURI === savedVoiceUri)
+                : -1;
+
+            if (currentVoice && languageBase(currentVoice.lang) === languageBase(selectedVoiceLanguage)) {
                 voiceSelect.value = currentVal;
+            } else if (savedVoiceIndex >= 0 && languageBase(availableVoices[savedVoiceIndex].lang) === languageBase(selectedVoiceLanguage)) {
+                voiceSelect.value = String(savedVoiceIndex);
             } else {
-                const defaultIdx = availableVoices.findIndex(v => v.name.includes('Aria') || v.name.includes('Jenny') || v.name.includes('UK English Female') || v.name.includes('Zira'));
-                if (defaultIdx !== -1) voiceSelect.value = defaultIdx;
+                chooseBestVoiceForLanguage(true);
             }
         }
+    }
+    populateLanguageSelect();
+    if (voiceLangSelect) {
+        voiceLangSelect.addEventListener("change", (event) => {
+            applyVoiceLanguage(event.target.value, { announce: true });
+        });
+    }
+    if (voiceSelect) {
+        voiceSelect.addEventListener("change", () => {
+            const selectedVoice = availableVoices[Number(voiceSelect.value)];
+            if (!selectedVoice) {
+                return;
+            }
+            localStorage.setItem("sx_voice_uri", selectedVoice.voiceURI || "");
+            if (selectedVoice.lang) {
+                selectedVoiceLanguage = selectedVoice.lang;
+                localStorage.setItem("sx_voice_language", selectedVoiceLanguage);
+                ensureLanguageOption(selectedVoiceLanguage);
+                if (voiceLangSelect) {
+                    voiceLangSelect.value = selectedVoiceLanguage;
+                }
+                if (recognition) {
+                    recognition.lang = selectedVoiceLanguage;
+                }
+            }
+            setVoiceCommandStatus("Voice changed", `${selectedVoice.name} (${selectedVoice.lang})`);
+        });
     }
     loadVoices();
     if (synth.onvoiceschanged !== undefined) synth.onvoiceschanged = loadVoices;
@@ -6435,11 +6798,18 @@ function initVoiceAssistant() {
         // Clamp values to ensure browser compatibility
         utterance.rate = Math.max(0.5, Math.min(2.0, rate + 0.06));
         utterance.pitch = Math.max(0.5, Math.min(2.0, pitch));
+        utterance.lang = selectedVoiceLanguage || "en-US";
         
-        if (voiceSelect && availableVoices[voiceSelect.value]) {
-            utterance.voice = availableVoices[voiceSelect.value];
+        const selectedVoice = voiceSelect ? availableVoices[Number(voiceSelect.value)] : null;
+        const matchingVoiceIndex = findVoiceIndexForLanguage(selectedVoiceLanguage);
+        if (selectedVoice && languageBase(selectedVoice.lang) === languageBase(selectedVoiceLanguage)) {
+            utterance.voice = selectedVoice;
+        } else if (matchingVoiceIndex >= 0) {
+            utterance.voice = availableVoices[matchingVoiceIndex];
         } else {
-            let bestVoice = availableVoices.find(v => v.name.includes('Aria')) ||
+            let bestVoice = selectedVoice ||
+                            availableVoices.find(v => languageBase(v.lang) === languageBase(selectedVoiceLanguage)) ||
+                            availableVoices.find(v => v.name.includes('Aria')) ||
                             availableVoices.find(v => v.name.includes('Jenny')) ||
                             availableVoices.find(v => v.name.includes('English')) ||
                             availableVoices[0];
@@ -6463,11 +6833,26 @@ function initVoiceAssistant() {
         synth.speak(utterance);
     }
 
-    function speakSequence(segments) {
+    async function speakSequence(segments) {
         // Keep recognition active so short interrupt commands like "stop" and "cut" work while speech is playing.
+        const generationId = ++speechGenerationId;
         synth.cancel();
-        
-        utteranceQueue = segments;
+        const normalized = (Array.isArray(segments) ? segments : [segments])
+            .map((segment) => String(segment || "").replace(/\s+/g, " ").trim())
+            .filter(Boolean);
+        if (!normalized.length) {
+            return;
+        }
+
+        if (languageBase(selectedVoiceLanguage) !== "en") {
+            setVoiceCommandStatus("Translating", selectedVoiceLanguage);
+        }
+        const translatedSegments = await translateSegmentsForSpeech(normalized);
+        if (generationId !== speechGenerationId) {
+            return;
+        }
+
+        utteranceQueue = translatedSegments;
         isSpeakingSequence = true;
         isVoicePaused = false;
         
@@ -6489,6 +6874,7 @@ function initVoiceAssistant() {
     }
 
     function stopSpeaking() {
+        speechGenerationId += 1;
         isSpeakingSequence = false;
         isVoicePaused = false;
         utteranceQueue = [];
@@ -6559,9 +6945,8 @@ function initVoiceAssistant() {
             navListenBtn.disabled = true;
         }
     } else {
-        setVoiceCommandStatus("Voice standby", "No command heard yet");
+        setVoiceCommandStatus("Voice standby", "Click Start Live Listening, then say Hey StructureX");
         updateListenButton();
-        startListeningIfMicrophoneAlreadyAllowed();
     }
 
     // Delegation for inline voice buttons inside the right panel
