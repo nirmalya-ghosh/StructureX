@@ -5410,6 +5410,7 @@ function initVoiceAssistant() {
     const navSummarizeBtn = document.getElementById('nav-summarize-btn');
     const navTranslateBtn = document.getElementById('nav-translate-btn');
     const navListenBtn = document.getElementById('nav-listen-btn');
+    const voiceCommandPanel = document.getElementById('voice-command-panel');
     const voiceCommandStatus = document.getElementById('voice-command-status');
     const voiceCommandTranscript = document.getElementById('voice-command-transcript');
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -5437,6 +5438,8 @@ function initVoiceAssistant() {
     let recognitionRunning = false;
     let commandListening = false;
     let recognitionSuspendedForSpeech = false;
+    let recognitionStarting = false;
+    let microphoneReady = false;
     let restartRecognitionTimer = null;
     let commandHotUntil = 0;
     let lastVoiceCommand = "";
@@ -5445,6 +5448,13 @@ function initVoiceAssistant() {
     let speechGenerationId = 0;
     let availableVoices = [];
     const WAKE_WINDOW_MS = 30000;
+    const MIC_CONSTRAINTS = {
+        audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+        },
+    };
     const LANGUAGE_OPTIONS = [
         ["en-US", "English"], ["en-GB", "English UK"],
         ["hi-IN", "Hindi"], ["bn-IN", "Bengali"], ["ta-IN", "Tamil"], ["te-IN", "Telugu"], ["mr-IN", "Marathi"], ["gu-IN", "Gujarati"], ["kn-IN", "Kannada"], ["ml-IN", "Malayalam"], ["pa-IN", "Punjabi"], ["ur-IN", "Urdu"], ["od-IN", "Odia"], ["ne-NP", "Nepali"], ["si-LK", "Sinhala"],
@@ -5492,6 +5502,13 @@ function initVoiceAssistant() {
         isNavMenuOpen = false;
     }
 
+    function updateVoiceListeningUi() {
+        navVoiceMenu?.classList.toggle("is-listening", commandListening);
+        navListenBtn?.classList.toggle("is-listening", commandListening);
+        navListenBtn?.setAttribute("aria-pressed", commandListening ? "true" : "false");
+        navVoiceBtn?.setAttribute("aria-pressed", commandListening ? "true" : "false");
+    }
+
     function setVoiceCommandStatus(status, transcript = null) {
         if (voiceCommandStatus) {
             voiceCommandStatus.textContent = status;
@@ -5499,14 +5516,23 @@ function initVoiceAssistant() {
         if (transcript !== null && voiceCommandTranscript) {
             voiceCommandTranscript.textContent = transcript || "Listening...";
         }
+        const normalizedStatus = String(status || "").toLowerCase();
+        const state = /blocked|unavailable|failed|error|denied|missing/.test(normalizedStatus)
+            ? "error"
+            : /hearing|listening|ready|heard|connecting|language set|voice changed/.test(normalizedStatus)
+                ? "active"
+                : "idle";
+        voiceCommandPanel?.setAttribute("data-voice-state", state);
+        navVoiceMenu?.setAttribute("data-voice-state", state);
     }
 
     function updateListenButton() {
         if (!navListenBtn) {
             return;
         }
+        updateVoiceListeningUi();
         navListenBtn.innerHTML = commandListening
-            ? '<i class="fas fa-ear-listen"></i> Stop Live Listening'
+            ? '<i class="fas fa-circle-stop"></i> Stop Live Listening'
             : '<i class="fas fa-ear-listen"></i> Start Live Listening';
     }
 
@@ -5702,6 +5728,80 @@ function initVoiceAssistant() {
         return Date.now() <= commandHotUntil;
     }
 
+    function isSpeechRecognitionAllowedContext() {
+        return window.isSecureContext ||
+            location.protocol === "https:" ||
+            ["localhost", "127.0.0.1", "::1"].includes(location.hostname);
+    }
+
+    async function ensureMicrophoneAccess() {
+        if (microphoneReady) {
+            return true;
+        }
+        if (!navigator.mediaDevices?.getUserMedia) {
+            microphoneReady = true;
+            return true;
+        }
+
+        try {
+            setVoiceCommandStatus("Connecting microphone", "Allow microphone access if your browser asks.");
+            const stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+            stream.getTracks().forEach((track) => track.stop());
+            microphoneReady = true;
+            return true;
+        } catch (error) {
+            console.warn("Microphone permission failed", error);
+            commandListening = false;
+            recognitionStarting = false;
+            microphoneReady = false;
+            navVoiceBtn?.classList.remove("listening");
+            setVoiceCommandStatus("Microphone blocked", "Allow microphone permission in the browser, then start again.");
+            updateListenButton();
+            return false;
+        }
+    }
+
+    function startRecognitionEngine(delay = 0) {
+        clearTimeout(restartRecognitionTimer);
+        const begin = () => {
+            if (!commandListening || recognitionSuspendedForSpeech || recognitionRunning || recognitionStarting) {
+                return;
+            }
+
+            const voiceRecognition = getRecognition();
+            if (!voiceRecognition) {
+                return;
+            }
+
+            try {
+                recognitionStarting = true;
+                voiceRecognition.lang = selectedVoiceLanguage || navigator.language || "en-US";
+                setVoiceCommandStatus("Connecting microphone", "Starting live voice capture...");
+                voiceRecognition.start();
+            } catch (error) {
+                recognitionStarting = false;
+                if (error?.name === "InvalidStateError") {
+                    recognitionRunning = true;
+                    setVoiceCommandStatus("Wake listening", "Mic is live. Say Hey StructureX, then a command.");
+                } else {
+                    console.warn("Voice recognition start skipped", error);
+                    setVoiceCommandStatus("Voice reconnecting", "Microphone engine is restarting...");
+                    if (commandListening) {
+                        restartVoiceRecognitionSoon(700);
+                    }
+                }
+            } finally {
+                updateListenButton();
+            }
+        };
+
+        if (delay > 0) {
+            restartRecognitionTimer = window.setTimeout(begin, delay);
+        } else {
+            begin();
+        }
+    }
+
     function getRecognition() {
         if (!SpeechRecognition) {
             return null;
@@ -5716,13 +5816,16 @@ function initVoiceAssistant() {
         recognition.lang = selectedVoiceLanguage || navigator.language || "en-US";
 
         recognition.onstart = () => {
+            recognitionStarting = false;
             recognitionRunning = true;
+            microphoneReady = true;
             navVoiceBtn?.classList.add("listening");
-            setVoiceCommandStatus("Wake listening", voiceCommandTranscript?.textContent || "Say Hey StructureX");
+            setVoiceCommandStatus("Wake listening", "Mic is live. Say Hey StructureX, then a command.");
             updateListenButton();
         };
 
         recognition.onend = () => {
+            recognitionStarting = false;
             recognitionRunning = false;
             navVoiceBtn?.classList.remove("listening");
             if (commandListening && !recognitionSuspendedForSpeech) {
@@ -5736,17 +5839,35 @@ function initVoiceAssistant() {
         };
 
         recognition.onerror = (event) => {
+            recognitionStarting = false;
             recognitionRunning = false;
+            const errorType = event.error || "unknown";
             if (event.error === "not-allowed" || event.error === "service-not-allowed") {
                 commandListening = false;
                 recognitionSuspendedForSpeech = false;
+                microphoneReady = false;
                 setVoiceCommandStatus("Microphone blocked", "Enable microphone permission in the browser.");
                 navVoiceBtn?.classList.remove("listening");
                 updateListenButton();
                 return;
             }
+            if (errorType === "audio-capture") {
+                commandListening = false;
+                microphoneReady = false;
+                setVoiceCommandStatus("Microphone missing", "No microphone input was found on this device.");
+                navVoiceBtn?.classList.remove("listening");
+                updateListenButton();
+                return;
+            }
+            if (errorType === "aborted" && !commandListening) {
+                return;
+            }
+            if (errorType === "no-speech") {
+                setVoiceCommandStatus("Wake listening", "No speech heard yet. Say Hey StructureX.");
+                return;
+            }
             if (commandListening && !recognitionSuspendedForSpeech) {
-                setVoiceCommandStatus("Wake listening", "Reconnecting voice input...");
+                setVoiceCommandStatus("Voice reconnecting", "Reconnecting voice input...");
             }
         };
 
@@ -5773,7 +5894,7 @@ function initVoiceAssistant() {
         return recognition;
     }
 
-    function startVoiceCommandListening({ announce = false } = {}) {
+    async function startVoiceCommandListening({ announce = false } = {}) {
         const voiceRecognition = getRecognition();
         if (!voiceRecognition) {
             setVoiceCommandStatus("Voice unavailable", "Live listening is not supported in this browser.");
@@ -5783,25 +5904,30 @@ function initVoiceAssistant() {
             return;
         }
 
+        if (!isSpeechRecognitionAllowedContext()) {
+            setVoiceCommandStatus("Voice unavailable", "Open the app on HTTPS or localhost to use live microphone commands.");
+            return;
+        }
+
         commandListening = true;
         recognitionSuspendedForSpeech = false;
-        setVoiceCommandStatus("Wake listening", "Say Hey StructureX");
+        setVoiceCommandStatus("Connecting microphone", "Preparing live voice capture...");
         updateListenButton();
-        if (!recognitionRunning) {
-            try {
-                voiceRecognition.start();
-            } catch (error) {
-                console.warn("Voice recognition start skipped", error);
-            }
+        const hasMicrophone = await ensureMicrophoneAccess();
+        if (!hasMicrophone || !commandListening) {
+            return;
         }
+        setVoiceCommandStatus("Wake listening", "Mic is live. Say Hey StructureX, then a command.");
+        startRecognitionEngine(80);
         if (announce) {
-            speakText("Wake listening is on. Say Hey StructureX before a command.");
+            setVoiceCommandStatus("Wake listening", "Mic is live. Say Hey StructureX, then a command.");
         }
     }
 
     function stopVoiceCommandListening({ announce = false } = {}) {
         commandListening = false;
         recognitionSuspendedForSpeech = false;
+        recognitionStarting = false;
         clearTimeout(restartRecognitionTimer);
         try {
             recognition?.stop();
@@ -5817,17 +5943,7 @@ function initVoiceAssistant() {
     }
 
     function restartVoiceRecognitionSoon(delay = 260) {
-        clearTimeout(restartRecognitionTimer);
-        restartRecognitionTimer = window.setTimeout(() => {
-            if (!commandListening || recognitionSuspendedForSpeech || recognitionRunning) {
-                return;
-            }
-            try {
-                recognition?.start();
-            } catch (error) {
-                console.warn("Voice recognition restart skipped", error);
-            }
-        }, delay);
+        startRecognitionEngine(delay);
     }
 
     function suspendCommandRecognitionForSpeech() {
@@ -5877,7 +5993,7 @@ function initVoiceAssistant() {
             return null;
         }
 
-        const wakePhrases = ["hey structurex", "ok structurex", "hello structurex"];
+        const wakePhrases = ["hey structurex", "ok structurex", "hello structurex", "hi structurex", "structurex"];
         let command = normalized;
         let hasWake = false;
         for (const phrase of wakePhrases) {
@@ -5955,7 +6071,8 @@ function initVoiceAssistant() {
     function normalizeVoiceCommand(value) {
         return String(value || "")
             .toLowerCase()
-            .replace(/structure\s*x/g, "structurex")
+            .replace(/structure\s*(xray|ex|x)\b/g, "structurex")
+            .replace(/\bstructures\b/g, "structurex")
             .replace(/[^a-z0-9\s.,'-]/g, " ")
             .replace(/\s+/g, " ")
             .trim();
