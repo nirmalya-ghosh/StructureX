@@ -5411,6 +5411,10 @@ function initVoiceAssistant() {
     const navTranslateBtn = document.getElementById('nav-translate-btn');
     const navListenBtn = document.getElementById('nav-listen-btn');
     const voiceCommandPanel = document.getElementById('voice-command-panel');
+    const voiceModeBadge = document.getElementById('voice-mode-badge');
+    const voiceConfidenceMeter = document.getElementById('voice-confidence-meter');
+    const voiceLastHeard = document.getElementById('voice-last-heard');
+    const voiceQuickButtons = Array.from(document.querySelectorAll('[data-voice-command]'));
     const voiceCommandStatus = document.getElementById('voice-command-status');
     const voiceCommandTranscript = document.getElementById('voice-command-transcript');
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -5509,21 +5513,45 @@ function initVoiceAssistant() {
         navVoiceBtn?.setAttribute("aria-pressed", commandListening ? "true" : "false");
     }
 
+    function setVoiceConfidence(confidence = 0) {
+        if (!voiceConfidenceMeter) {
+            return;
+        }
+        const normalized = Math.max(0, Math.min(1, Number(confidence) || 0));
+        voiceConfidenceMeter.style.width = `${Math.max(8, Math.round(normalized * 100))}%`;
+    }
+
     function setVoiceCommandStatus(status, transcript = null) {
         if (voiceCommandStatus) {
             voiceCommandStatus.textContent = status;
         }
         if (transcript !== null && voiceCommandTranscript) {
             voiceCommandTranscript.textContent = transcript || "Listening...";
+            if (voiceLastHeard) {
+                voiceLastHeard.textContent = transcript ? `Last heard: ${transcript}` : "Awaiting wake phrase";
+            }
         }
         const normalizedStatus = String(status || "").toLowerCase();
         const state = /blocked|unavailable|failed|error|denied|missing/.test(normalizedStatus)
             ? "error"
-            : /hearing|listening|ready|heard|connecting|language set|voice changed/.test(normalizedStatus)
+            : /hearing|listening|ready|heard|connecting|queued|language set|voice changed/.test(normalizedStatus)
                 ? "active"
                 : "idle";
         voiceCommandPanel?.setAttribute("data-voice-state", state);
         navVoiceMenu?.setAttribute("data-voice-state", state);
+        if (voiceModeBadge) {
+            if (state === "error") {
+                voiceModeBadge.textContent = "Needs access";
+            } else if (/connecting/.test(normalizedStatus)) {
+                voiceModeBadge.textContent = "Connecting";
+            } else if (/hearing|heard/.test(normalizedStatus)) {
+                voiceModeBadge.textContent = "Capturing";
+            } else if (commandListening) {
+                voiceModeBadge.textContent = "Live";
+            } else {
+                voiceModeBadge.textContent = "Standby";
+            }
+        }
     }
 
     function updateListenButton() {
@@ -5874,8 +5902,11 @@ function initVoiceAssistant() {
         recognition.onresult = (event) => {
             let interimText = "";
             let finalText = "";
+            let bestConfidence = 0;
             for (let index = event.resultIndex; index < event.results.length; index += 1) {
-                const transcript = event.results[index][0]?.transcript || "";
+                const match = event.results[index][0];
+                const transcript = match?.transcript || "";
+                bestConfidence = Math.max(bestConfidence, Number(match?.confidence) || 0);
                 if (event.results[index].isFinal) {
                     finalText += transcript;
                 } else {
@@ -5883,10 +5914,16 @@ function initVoiceAssistant() {
                 }
             }
 
+            if (bestConfidence) {
+                setVoiceConfidence(bestConfidence);
+            } else if (interimText.trim() || finalText.trim()) {
+                setVoiceConfidence(0.58);
+            }
             if (interimText.trim()) {
                 setVoiceCommandStatus("Hearing", interimText.trim());
             }
             if (finalText.trim()) {
+                setVoiceConfidence(Math.max(bestConfidence, 0.82));
                 processVoiceTranscript(finalText.trim());
             }
         };
@@ -5911,6 +5948,7 @@ function initVoiceAssistant() {
 
         commandListening = true;
         recognitionSuspendedForSpeech = false;
+        setVoiceConfidence(0.18);
         setVoiceCommandStatus("Connecting microphone", "Preparing live voice capture...");
         updateListenButton();
         const hasMicrophone = await ensureMicrophoneAccess();
@@ -5935,6 +5973,7 @@ function initVoiceAssistant() {
             console.warn("Voice recognition stop skipped", error);
         }
         navVoiceBtn?.classList.remove("listening");
+        setVoiceConfidence(0);
         setVoiceCommandStatus("Voice standby", "No command heard yet");
         updateListenButton();
         if (announce) {
@@ -6688,6 +6727,19 @@ function initVoiceAssistant() {
             }
         });
     }
+
+    voiceQuickButtons.forEach((button) => {
+        button.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            const command = button.dataset.voiceCommand || "";
+            if (!command) {
+                return;
+            }
+            setVoiceConfidence(0.9);
+            setVoiceCommandStatus("Command queued", command.replace(/^hey structurex\s*/i, ""));
+            await processVoiceTranscript(command);
+        });
+    });
 
     // Prevent clicks inside the menu from closing it
     if (navVoiceMenu) {
