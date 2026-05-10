@@ -5433,6 +5433,8 @@ function initVoiceAssistant() {
     const dragHandle = statusPanel ? statusPanel.querySelector('.v-status-top') : null;
     
     let voiceTimer = null;
+    let voiceHudPulseTimer = null;
+    let voiceHudPulseSeed = 0;
     let voiceSeconds = 0;
     let utteranceQueue = [];
     let isSpeakingSequence = false;
@@ -7126,7 +7128,13 @@ function initVoiceAssistant() {
         statusPanel.dataset.speechState = state;
         statusPanel.classList.toggle("is-speaking", state === "speaking");
         statusPanel.classList.toggle("is-paused", state === "paused");
+        statusPanel.classList.toggle("is-waiting", state === "waiting");
         waveform?.classList.toggle("paused", state === "paused");
+        if (state === "speaking") {
+            startVoiceHudPulseLoop();
+        } else {
+            stopVoiceHudPulseLoop();
+        }
     }
 
     function syncVoiceHudPulse(seed = 0) {
@@ -7135,10 +7143,33 @@ function initVoiceAssistant() {
         }
         const bars = Array.from(waveform.querySelectorAll(".v-bar"));
         bars.forEach((bar, index) => {
-            const pulse = 0.68 + (((seed + index * 19) % 44) / 100);
+            const pulse = 0.55 + (((seed + index * 23) % 60) / 100);
             bar.style.setProperty("--voice-bar-scale", pulse.toFixed(2));
         });
-        statusPanel.style.setProperty("--voice-pulse-strength", String(0.86 + ((seed % 14) / 100)));
+        statusPanel.style.setProperty("--voice-pulse-strength", String(0.94 + ((seed % 16) / 100)));
+        statusPanel.style.setProperty("--voice-core-shift", `${(seed % 7) - 3}px`);
+        statusPanel.style.setProperty("--voice-core-tilt", `${((seed * 3) % 10) - 5}deg`);
+    }
+
+    function startVoiceHudPulseLoop() {
+        if (voiceHudPulseTimer) {
+            return;
+        }
+        voiceHudPulseTimer = setInterval(() => {
+            if (!isSpeakingSequence || isVoicePaused) {
+                stopVoiceHudPulseLoop();
+                return;
+            }
+            voiceHudPulseSeed += 1;
+            syncVoiceHudPulse(voiceHudPulseSeed);
+        }, 120);
+    }
+
+    function stopVoiceHudPulseLoop() {
+        if (voiceHudPulseTimer) {
+            clearInterval(voiceHudPulseTimer);
+            voiceHudPulseTimer = null;
+        }
     }
 
     function playNextSegment() {
