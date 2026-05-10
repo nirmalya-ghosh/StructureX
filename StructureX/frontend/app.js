@@ -5478,6 +5478,8 @@ function initVoiceAssistant() {
         vietnamese: "vi-VN", zulu: "zu-ZA",
     };
     let selectedVoiceLanguage = localStorage.getItem("sx_voice_language") || navigator.language || "en-US";
+    let languagePicker = null;
+    let aiVoicePicker = null;
 
     function positionNavVoiceMenu() {
         if (!navVoiceBtn || !navVoiceMenu) return;
@@ -5504,6 +5506,153 @@ function initVoiceAssistant() {
         if (!navVoiceMenu) return;
         navVoiceMenu.classList.remove('show');
         isNavMenuOpen = false;
+    }
+
+    function compactSelectLabel(value) {
+        return String(value || "").replace(/\s+/g, " ").trim();
+    }
+
+    function closeVoicePickers(except = null) {
+        [languagePicker, aiVoicePicker].forEach((picker) => {
+            if (picker && picker !== except) {
+                picker.close();
+            }
+        });
+    }
+
+    function createVoiceSelectPicker(select, fallbackLabel) {
+        if (!select || select.dataset.voicePicker === "ready") {
+            return null;
+        }
+
+        select.dataset.voicePicker = "ready";
+        select.classList.add("v-native-select");
+        select.setAttribute("aria-hidden", "true");
+        select.tabIndex = -1;
+
+        const picker = document.createElement("div");
+        picker.className = "v-custom-select";
+        const trigger = document.createElement("button");
+        trigger.type = "button";
+        trigger.className = "v-custom-trigger";
+        trigger.setAttribute("aria-haspopup", "listbox");
+        trigger.setAttribute("aria-expanded", "false");
+        const valueLabel = document.createElement("span");
+        const chevron = document.createElement("i");
+        chevron.className = "fas fa-chevron-down";
+        const menu = document.createElement("div");
+        menu.className = "v-custom-menu";
+        menu.setAttribute("role", "listbox");
+
+        trigger.append(valueLabel, chevron);
+        picker.append(trigger, menu);
+        select.insertAdjacentElement("afterend", picker);
+
+        let api = null;
+        const getOptions = () => Array.from(select.options);
+        const chooseValue = (value, { dispatch = true } = {}) => {
+            select.value = String(value);
+            if (dispatch) {
+                select.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+            render();
+            close();
+        };
+
+        function close() {
+            picker.classList.remove("is-open");
+            trigger.setAttribute("aria-expanded", "false");
+        }
+
+        function open() {
+            closeVoicePickers(api);
+            render();
+            picker.classList.add("is-open");
+            trigger.setAttribute("aria-expanded", "true");
+            const activeOption = menu.querySelector('[aria-selected="true"]');
+            activeOption?.scrollIntoView({ block: "nearest" });
+        }
+
+        function render() {
+            const options = getOptions();
+            const selectedOption = select.selectedOptions?.[0] || options[0];
+            const label = compactSelectLabel(selectedOption?.textContent) || fallbackLabel;
+            valueLabel.textContent = label;
+            valueLabel.title = label;
+            menu.innerHTML = "";
+
+            if (!options.length) {
+                const empty = document.createElement("div");
+                empty.className = "v-custom-empty";
+                empty.textContent = "Loading voices...";
+                menu.appendChild(empty);
+                return;
+            }
+
+            options.forEach((option) => {
+                const item = document.createElement("button");
+                const isSelected = option.value === select.value;
+                item.type = "button";
+                item.className = "v-custom-option";
+                item.setAttribute("role", "option");
+                item.setAttribute("aria-selected", isSelected ? "true" : "false");
+                item.dataset.value = option.value;
+
+                const optionText = document.createElement("span");
+                optionText.textContent = compactSelectLabel(option.textContent);
+                const check = document.createElement("i");
+                check.className = isSelected ? "fas fa-check" : "fas fa-circle";
+
+                item.append(optionText, check);
+                item.addEventListener("click", () => chooseValue(option.value));
+                menu.appendChild(item);
+            });
+        }
+
+        trigger.addEventListener("click", (event) => {
+            event.stopPropagation();
+            if (picker.classList.contains("is-open")) {
+                close();
+            } else {
+                open();
+            }
+        });
+
+        trigger.addEventListener("keydown", (event) => {
+            const options = getOptions();
+            if (!options.length) {
+                return;
+            }
+            const currentIndex = Math.max(0, options.findIndex((option) => option.value === select.value));
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                const direction = event.key === "ArrowDown" ? 1 : -1;
+                const nextIndex = (currentIndex + direction + options.length) % options.length;
+                chooseValue(options[nextIndex].value);
+                open();
+            } else if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                picker.classList.contains("is-open") ? close() : open();
+            } else if (event.key === "Escape") {
+                close();
+            }
+        });
+
+        document.addEventListener("click", (event) => {
+            if (!picker.contains(event.target)) {
+                close();
+            }
+        });
+
+        select.addEventListener("change", render);
+        api = { close, open, render };
+        render();
+        return api;
+    }
+
+    function syncVoicePickers() {
+        languagePicker?.render();
+        aiVoicePicker?.render();
     }
 
     function updateVoiceListeningUi() {
@@ -5618,6 +5767,7 @@ function initVoiceAssistant() {
             option.value = language;
             option.textContent = `Custom (${language})`;
             voiceLangSelect.appendChild(option);
+            languagePicker?.render();
         }
     }
 
@@ -5642,6 +5792,7 @@ function initVoiceAssistant() {
         voiceLangSelect.value = hasSaved ? selectedVoiceLanguage : browserLang;
         selectedVoiceLanguage = voiceLangSelect.value;
         localStorage.setItem("sx_voice_language", selectedVoiceLanguage);
+        languagePicker?.render();
     }
 
     function findVoiceIndexForLanguage(lang) {
@@ -5665,6 +5816,7 @@ function initVoiceAssistant() {
         if (index >= 0) {
             voiceSelect.value = String(index);
             localStorage.setItem("sx_voice_uri", availableVoices[index].voiceURI || "");
+            aiVoicePicker?.render();
         }
     }
 
@@ -5679,6 +5831,7 @@ function initVoiceAssistant() {
             recognition.lang = selectedVoiceLanguage;
         }
         chooseBestVoiceForLanguage(true);
+        syncVoicePickers();
         const label = resolveLanguageChoice(selectedVoiceLanguage)?.label || selectedVoiceLanguage;
         setVoiceCommandStatus("Language set", `${label} (${selectedVoiceLanguage})`);
         if (commandListening && recognitionRunning) {
@@ -6634,6 +6787,7 @@ function initVoiceAssistant() {
                 recognition.lang = selectedVoiceLanguage;
             }
         }
+        syncVoicePickers();
         const readableName = selectedVoice?.name?.replace(/Microsoft|Google/gi, "").replace(/\s+/g, " ").trim() || "the next voice";
         setVoiceCommandStatus("Voice changed", readableName);
         speakText(`Voice changed to ${readableName}.`);
@@ -6857,6 +7011,7 @@ function initVoiceAssistant() {
         // Only repopulate if voice count changed to avoid flickering/selection loss
         if (voiceSelect && newVoices.length === availableVoices.length && voiceSelect.options.length > 0) {
             chooseBestVoiceForLanguage(false);
+            aiVoicePicker?.render();
             return;
         }
         
@@ -6885,9 +7040,13 @@ function initVoiceAssistant() {
             } else {
                 chooseBestVoiceForLanguage(true);
             }
+            aiVoicePicker?.render();
         }
     }
     populateLanguageSelect();
+    languagePicker = createVoiceSelectPicker(voiceLangSelect, "Command language");
+    aiVoicePicker = createVoiceSelectPicker(voiceSelect, "AI voice");
+    syncVoicePickers();
     if (voiceLangSelect) {
         voiceLangSelect.addEventListener("change", (event) => {
             applyVoiceLanguage(event.target.value, { announce: true });
@@ -6912,6 +7071,7 @@ function initVoiceAssistant() {
                 }
             }
             setVoiceCommandStatus("Voice changed", `${selectedVoice.name} (${selectedVoice.lang})`);
+            syncVoicePickers();
         });
     }
     loadVoices();
