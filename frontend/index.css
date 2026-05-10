@@ -4034,6 +4034,189 @@ body[data-risk-level="critical"] #header {
     }
 }
 
+/* Reference-style voice orb: label removed, lower HUD placement, speech-synced motion */
+#voice-assistant-widget.voice-widget {
+    bottom: 24px;
+    top: auto;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.voice-status-panel {
+    --voice-pulse-strength: 0.92;
+    width: 246px;
+    height: 246px;
+    overflow: visible;
+    border-color: rgba(125, 211, 252, 0.5);
+    background:
+        radial-gradient(circle at 50% 49%, rgba(56, 189, 248, 0.08) 0 24%, transparent 44%),
+        radial-gradient(circle at 50% 50%, rgba(2, 8, 23, 0.74) 42%, rgba(8, 13, 27, 0.92) 72%, rgba(3, 7, 18, 0.96) 100%);
+    box-shadow:
+        0 18px 52px rgba(2, 6, 23, 0.66),
+        0 0 34px rgba(56, 189, 248, 0.18),
+        inset 0 0 28px rgba(125, 211, 252, 0.08);
+}
+
+.voice-status-panel::before {
+    inset: -1px;
+    background:
+        conic-gradient(from 225deg, transparent 0 9%, rgba(251, 191, 36, 0.74) 13%, transparent 21% 38%, rgba(20, 184, 166, 0.78) 44%, rgba(56, 189, 248, 0.9) 58%, transparent 72% 100%);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 14px), #000 calc(100% - 13px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 14px), #000 calc(100% - 13px));
+    opacity: calc(0.55 * var(--voice-pulse-strength));
+    animation-play-state: paused;
+}
+
+.voice-status-panel::after {
+    inset: 34px;
+    border-color: rgba(125, 211, 252, 0.22);
+    box-shadow:
+        inset 0 0 24px rgba(56, 189, 248, 0.12),
+        0 0 38px rgba(56, 189, 248, 0.08);
+}
+
+.voice-status-panel.is-speaking::before {
+    animation-play-state: running;
+    opacity: calc(0.78 * var(--voice-pulse-strength));
+}
+
+.voice-status-panel.is-paused::before,
+.voice-status-panel.is-paused .v-waveform,
+.voice-status-panel.is-paused .v-waveform::before {
+    animation-play-state: paused;
+}
+
+.v-status-top {
+    top: 13px;
+    left: auto;
+    right: 14px;
+    width: auto;
+    justify-content: flex-end;
+}
+
+.v-status-top > div {
+    display: none;
+}
+
+#v-status-close {
+    width: 26px;
+    height: 26px;
+    opacity: 0.72;
+    background: rgba(2, 6, 23, 0.3);
+    backdrop-filter: blur(12px);
+}
+
+#v-status-close:hover {
+    opacity: 1;
+}
+
+.v-waveform {
+    top: 57px;
+    width: 116px;
+    height: 116px;
+    gap: 6px;
+    border-color: rgba(186, 230, 253, 0.42);
+    background:
+        radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.92) 0 10%, rgba(125, 211, 252, 0.86) 19%, rgba(14, 165, 233, 0.66) 45%, rgba(251, 191, 36, 0.52) 72%, rgba(2, 8, 23, 0.2) 100%);
+    box-shadow:
+        0 0 30px rgba(56, 189, 248, 0.5),
+        0 0 58px rgba(251, 191, 36, 0.16),
+        inset 0 0 22px rgba(255, 255, 255, 0.16);
+    animation-play-state: paused;
+}
+
+.voice-status-panel.is-speaking .v-waveform {
+    animation-play-state: running;
+}
+
+.v-waveform::before {
+    inset: -34px;
+    opacity: 0.54;
+    animation-play-state: paused;
+}
+
+.voice-status-panel.is-speaking .v-waveform::before {
+    animation-play-state: running;
+    opacity: 0.72;
+}
+
+.v-waveform::after {
+    inset: -15px;
+}
+
+.v-waveform .v-bar {
+    height: 8px;
+    transform: scaleY(var(--voice-bar-scale, 0.75));
+    transform-origin: center;
+    opacity: 0.62;
+    animation-play-state: paused;
+}
+
+.voice-status-panel.is-speaking .v-waveform .v-bar {
+    opacity: 1;
+    animation: voice-bar-sync 0.54s ease-in-out infinite;
+}
+
+.voice-status-panel.is-speaking .v-waveform .v-bar:nth-child(2) {
+    animation-delay: 0.08s;
+}
+
+.voice-status-panel.is-speaking .v-waveform .v-bar:nth-child(3) {
+    animation-delay: 0.16s;
+}
+
+.voice-status-panel.is-speaking .v-waveform .v-bar:nth-child(4) {
+    animation-delay: 0.24s;
+}
+
+.voice-status-panel.is-speaking .v-waveform .v-bar:nth-child(5) {
+    animation-delay: 0.32s;
+}
+
+.v-timer {
+    bottom: 49px;
+    font-size: 1.22rem;
+    text-shadow: 0 0 14px rgba(255, 255, 255, 0.45), 0 0 22px rgba(56, 189, 248, 0.28);
+}
+
+.v-controls {
+    bottom: 9px;
+    gap: 20px;
+}
+
+.v-controls button {
+    width: 42px;
+    height: 42px;
+}
+
+@keyframes voice-bar-sync {
+    0%, 100% {
+        transform: scaleY(calc(var(--voice-bar-scale, 0.8) * 0.72));
+    }
+    50% {
+        transform: scaleY(calc(var(--voice-bar-scale, 0.8) * 1.45));
+    }
+}
+
+@media (max-width: 560px) {
+    .voice-status-panel {
+        width: 222px;
+        height: 222px;
+    }
+    .v-waveform {
+        top: 52px;
+        width: 98px;
+        height: 98px;
+    }
+    .v-timer {
+        bottom: 45px;
+        font-size: 1.05rem;
+    }
+    .v-controls {
+        bottom: 8px;
+    }
+}
+
 #voice-stop-btn {
     color: #f87171;
     margin-top: 4px;

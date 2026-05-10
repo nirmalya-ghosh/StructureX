@@ -7108,6 +7108,39 @@ function initVoiceAssistant() {
         if (voiceTimer) clearInterval(voiceTimer);
     }
 
+    function resetVoiceHudPosition() {
+        if (!voiceWidget) {
+            return;
+        }
+        voiceWidget.style.left = "50%";
+        voiceWidget.style.right = "auto";
+        voiceWidget.style.top = "auto";
+        voiceWidget.style.bottom = "24px";
+        voiceWidget.style.transform = "translateX(-50%)";
+    }
+
+    function setVoiceHudState(state = "idle") {
+        if (!statusPanel) {
+            return;
+        }
+        statusPanel.dataset.speechState = state;
+        statusPanel.classList.toggle("is-speaking", state === "speaking");
+        statusPanel.classList.toggle("is-paused", state === "paused");
+        waveform?.classList.toggle("paused", state === "paused");
+    }
+
+    function syncVoiceHudPulse(seed = 0) {
+        if (!statusPanel || !waveform) {
+            return;
+        }
+        const bars = Array.from(waveform.querySelectorAll(".v-bar"));
+        bars.forEach((bar, index) => {
+            const pulse = 0.68 + (((seed + index * 19) % 44) / 100);
+            bar.style.setProperty("--voice-bar-scale", pulse.toFixed(2));
+        });
+        statusPanel.style.setProperty("--voice-pulse-strength", String(0.86 + ((seed % 14) / 100)));
+    }
+
     function playNextSegment() {
         if (utteranceQueue.length === 0) {
             stopSpeaking();
@@ -7146,6 +7179,7 @@ function initVoiceAssistant() {
         }
 
         utterance.onend = () => {
+            setVoiceHudState("waiting");
             if (isSpeakingSequence) {
                 // Gap adjustment for smoother flow
                 setTimeout(() => {
@@ -7158,6 +7192,18 @@ function initVoiceAssistant() {
             console.error("SpeechSynthesis error:", e);
             if (isSpeakingSequence) playNextSegment();
         };
+
+        utterance.onstart = () => {
+            setVoiceHudState("speaking");
+            syncVoiceHudPulse(text.length);
+        };
+
+        utterance.onboundary = (event) => {
+            syncVoiceHudPulse(Number(event.charIndex || 0) + text.length);
+        };
+
+        utterance.onpause = () => setVoiceHudState("paused");
+        utterance.onresume = () => setVoiceHudState("speaking");
 
         synth.speak(utterance);
     }
@@ -7186,9 +7232,11 @@ function initVoiceAssistant() {
         isVoicePaused = false;
         
         if (navVoiceBtn) navVoiceBtn.classList.add('active');
+        resetVoiceHudPosition();
         statusPanel.classList.add('active');
         pauseBtn.querySelector('i').className = 'fas fa-pause';
-        waveform.classList.remove('paused');
+        setVoiceHudState("speaking");
+        syncVoiceHudPulse(translatedSegments.join("").length);
         
         startTimer();
         playNextSegment();
@@ -7209,6 +7257,7 @@ function initVoiceAssistant() {
         utteranceQueue = [];
         synth.cancel();
         if (navVoiceBtn) navVoiceBtn.classList.remove('active');
+        setVoiceHudState("idle");
         statusPanel.classList.remove('active');
         stopTimer();
         resumeCommandRecognitionAfterSpeech();
@@ -7221,12 +7270,12 @@ function initVoiceAssistant() {
                 synth.resume();
                 isVoicePaused = false;
                 pauseBtn.querySelector('i').className = 'fas fa-pause';
-                waveform.classList.remove('paused');
+                setVoiceHudState("speaking");
             } else {
                 synth.pause();
                 isVoicePaused = true;
                 pauseBtn.querySelector('i').className = 'fas fa-play';
-                waveform.classList.add('paused');
+                setVoiceHudState("paused");
             }
         }
     });
