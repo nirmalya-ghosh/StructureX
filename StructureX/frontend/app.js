@@ -7117,7 +7117,7 @@ function initVoiceAssistant() {
         voiceWidget.style.left = "50%";
         voiceWidget.style.right = "auto";
         voiceWidget.style.top = "auto";
-        voiceWidget.style.bottom = "24px";
+        voiceWidget.style.bottom = "18px";
         voiceWidget.style.transform = "translateX(-50%)";
     }
 

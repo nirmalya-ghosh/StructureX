@@ -4511,6 +4511,221 @@ body[data-risk-level="critical"] #header {
 /* ═══════════════════════════════════════════════════════════════
    USER PROFILE PANEL
    ═══════════════════════════════════════════════════════════════ */
+/* Compact Voice Capsule HUD */
+#voice-assistant-widget.voice-widget {
+    bottom: 18px !important;
+    top: auto !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+}
+
+.voice-status-panel {
+    --voice-pulse-strength: 1;
+    --voice-core-shift: 0px;
+    --voice-core-tilt: 0deg;
+    width: 188px;
+    height: 124px;
+    min-width: 0;
+    overflow: hidden;
+    border-radius: 26px;
+    border: 1px solid rgba(125, 211, 252, 0.34);
+    background:
+        radial-gradient(circle at 23% 42%, rgba(56, 189, 248, 0.2), transparent 28%),
+        radial-gradient(circle at 76% 20%, rgba(52, 211, 153, 0.12), transparent 26%),
+        linear-gradient(150deg, rgba(3, 9, 23, 0.94), rgba(10, 20, 39, 0.92) 52%, rgba(6, 18, 31, 0.94));
+    box-shadow:
+        0 18px 44px rgba(2, 6, 23, 0.58),
+        0 0 24px rgba(56, 189, 248, 0.17),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.voice-status-panel::before {
+    inset: 0;
+    border-radius: inherit;
+    background:
+        linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.32), rgba(52, 211, 153, 0.2), transparent),
+        linear-gradient(135deg, rgba(255, 255, 255, 0.07), transparent 34%);
+    -webkit-mask: linear-gradient(#000 0 0) top / 100% 1px no-repeat, linear-gradient(#000 0 0) left / 1px 100% no-repeat;
+    mask: linear-gradient(#000 0 0) top / 100% 1px no-repeat, linear-gradient(#000 0 0) left / 1px 100% no-repeat;
+    opacity: 0.78;
+    animation: none;
+    filter: none;
+}
+
+.voice-status-panel::after {
+    inset: auto 14px 12px 14px;
+    height: 1px;
+    border: 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.32), rgba(251, 191, 36, 0.2), transparent);
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.16);
+}
+
+.voice-status-panel.is-speaking {
+    border-color: rgba(56, 189, 248, 0.54);
+    box-shadow:
+        0 20px 50px rgba(2, 6, 23, 0.64),
+        0 0 calc(22px * var(--voice-pulse-strength)) rgba(56, 189, 248, 0.22),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.v-status-top {
+    top: 8px;
+    right: 8px;
+    left: auto;
+    width: auto;
+    justify-content: flex-end;
+}
+
+.v-status-top > div {
+    display: none;
+}
+
+#v-status-close {
+    width: 24px;
+    height: 24px;
+    opacity: 0.72;
+    color: #cbd5e1;
+    border-color: rgba(148, 163, 184, 0.16);
+    background: rgba(2, 6, 23, 0.32);
+}
+
+#v-status-close:hover {
+    opacity: 1;
+    color: #fee2e2;
+    border-color: rgba(248, 113, 113, 0.42);
+}
+
+.v-waveform {
+    top: 28px;
+    left: 20px;
+    width: 58px;
+    height: 58px;
+    gap: 3px;
+    border-radius: 50%;
+    border: 1px solid rgba(186, 230, 253, 0.28);
+    transform: translateY(var(--voice-core-shift)) rotate(var(--voice-core-tilt)) scale(calc(0.94 + (var(--voice-pulse-strength) - 1) * 0.45));
+    background:
+        radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.94) 0 12%, transparent 23%),
+        radial-gradient(circle at 44% 44%, rgba(125, 211, 252, 0.86) 0 34%, rgba(14, 165, 233, 0.68) 54%, transparent 72%),
+        radial-gradient(circle at 70% 72%, rgba(251, 191, 36, 0.72) 0 22%, transparent 58%),
+        rgba(8, 47, 73, 0.28);
+    box-shadow:
+        0 0 18px rgba(56, 189, 248, 0.48),
+        inset 0 0 12px rgba(255, 255, 255, 0.12);
+    animation: capsule-core 4s ease-in-out infinite;
+}
+
+.v-waveform::before {
+    inset: -8px;
+    border-radius: 50%;
+    background: conic-gradient(from 220deg, rgba(56, 189, 248, 0.06), rgba(56, 189, 248, 0.62), transparent 34%, rgba(251, 191, 36, 0.44), transparent 72%);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+    opacity: 0.62;
+}
+
+.v-waveform::after {
+    inset: 7px;
+    border-radius: 48% 52% 52% 48%;
+    border: 1px solid rgba(236, 254, 255, 0.2);
+    background: radial-gradient(circle at 36% 28%, rgba(255, 255, 255, 0.36), transparent 28%);
+}
+
+.v-waveform .v-bar {
+    width: 4px;
+    height: 3px;
+    z-index: 5;
+    border-radius: 999px;
+    background: #bae6fd;
+    box-shadow: 0 0 8px rgba(125, 211, 252, 0.86);
+    transform: translateY(6px) scaleY(var(--voice-bar-scale, 0.8));
+}
+
+.voice-status-panel.is-speaking .v-waveform .v-bar {
+    animation: capsule-bars 0.38s ease-in-out infinite;
+}
+
+.v-timer {
+    left: auto;
+    right: 44px;
+    bottom: auto;
+    top: 33px;
+    transform: none;
+    font-size: 1.03rem;
+    letter-spacing: 0.07em;
+    text-shadow: 0 0 12px rgba(255, 255, 255, 0.34);
+}
+
+.v-controls {
+    left: auto;
+    right: 16px;
+    bottom: 18px;
+    width: auto;
+    gap: 9px;
+    transform: none;
+}
+
+.v-controls button {
+    width: 30px;
+    height: 30px;
+    font-size: 0.7rem;
+    border-color: rgba(125, 211, 252, 0.22);
+    background: rgba(15, 23, 42, 0.62);
+    box-shadow: 0 8px 20px rgba(2, 6, 23, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.v-controls button:hover {
+    transform: translateY(-1px) scale(1.05);
+}
+
+@keyframes capsule-core {
+    0%, 100% {
+        filter: saturate(1.08) brightness(1);
+    }
+    50% {
+        filter: saturate(1.28) brightness(1.08);
+    }
+}
+
+@keyframes capsule-bars {
+    0%, 100% {
+        transform: translateY(6px) scaleY(calc(var(--voice-bar-scale, 0.8) * 0.72));
+        opacity: 0.6;
+    }
+    50% {
+        transform: translateY(6px) scaleY(calc(var(--voice-bar-scale, 0.8) * 1.7));
+        opacity: 1;
+    }
+}
+
+@media (max-width: 560px) {
+    .voice-status-panel {
+        width: 176px;
+        height: 116px;
+        border-radius: 24px;
+    }
+    .v-waveform {
+        top: 30px;
+        left: 18px;
+        width: 50px;
+        height: 50px;
+    }
+    .v-timer {
+        top: 35px;
+        right: 40px;
+        font-size: 0.88rem;
+    }
+    .v-controls {
+        right: 14px;
+        bottom: 17px;
+    }
+    .v-controls button {
+        width: 28px;
+        height: 28px;
+    }
+}
+
 .user-profile-panel {
     position: absolute;
     top: calc(var(--header-h) - 4px);
