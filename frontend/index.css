@@ -5063,6 +5063,73 @@ body[data-risk-level="critical"] #header {
     box-shadow: 0 0 0 2px rgba(59,130,246,0.5);
 }
 
+.turnstile-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(2, 6, 23, 0.74);
+    backdrop-filter: blur(16px);
+}
+
+.turnstile-modal.visible {
+    display: flex;
+}
+
+.turnstile-card {
+    position: relative;
+    width: min(420px, 100%);
+    padding: 26px;
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    border-radius: 18px;
+    text-align: center;
+}
+
+.turnstile-card h3 {
+    margin: 12px 0 8px;
+    color: var(--text-bright);
+    font-size: 1.25rem;
+}
+
+.turnstile-card p {
+    margin: 0 0 18px;
+    color: var(--text-muted);
+    line-height: 1.45;
+}
+
+.turnstile-icon {
+    width: 48px;
+    height: 48px;
+    display: grid;
+    place-items: center;
+    margin: 0 auto;
+    border-radius: 14px;
+    background: rgba(59, 130, 246, 0.15);
+    color: #93c5fd;
+}
+
+.turnstile-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 34px;
+    height: 34px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.78);
+    color: var(--text);
+    cursor: pointer;
+}
+
+#dashboard-turnstile {
+    display: flex;
+    justify-content: center;
+    min-height: 70px;
+}
+
 /* Mobile */
 @media (max-width: 900px) {
     .user-profile-panel {

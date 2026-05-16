@@ -619,6 +619,33 @@ body::-webkit-scrollbar-thumb {
     color: #bfdbfe;
 }
 
+.turnstile-box {
+    display: flex;
+    justify-content: center;
+    min-height: 70px;
+    margin: 16px 0;
+}
+
+.turnstile-box:empty {
+    display: none;
+}
+
+.turnstile-box iframe {
+    max-width: 100%;
+}
+
+.turnstile-disabled {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    border-radius: 14px;
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--text-dim);
+    text-align: center;
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+
 /* Responsive */
 @media (max-height: 700px) {
     body { padding-top: 18px; gap: 16px; }

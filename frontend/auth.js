@@ -16,6 +16,8 @@ const GOOGLE_ICON =
   '<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google">';
 
 let supabaseClientPromise = null;
+let authConfigPromise = null;
+const turnstileWidgets = new Map();
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -121,6 +123,11 @@ function getSupabaseLibrary() {
 }
 
 async function loadAuthConfig() {
+  if (authConfigPromise) {
+    return authConfigPromise;
+  }
+
+  authConfigPromise = (async () => {
   const response = await fetch(AUTH_CONFIG_ENDPOINT, {
     headers: { Accept: "application/json" },
     cache: "no-store",
@@ -138,6 +145,102 @@ async function loadAuthConfig() {
   }
 
   return config;
+  })();
+
+  return authConfigPromise;
+}
+
+async function loadTurnstileConfig() {
+  try {
+    const config = await loadAuthConfig();
+    return config.turnstile || { enabled: false, siteKey: "" };
+  } catch (error) {
+    console.warn("Turnstile config unavailable:", error);
+    return { enabled: false, siteKey: "" };
+  }
+}
+
+function waitForTurnstile() {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      if (window.turnstile && typeof window.turnstile.render === "function") {
+        resolve(window.turnstile);
+        return;
+      }
+      if (Date.now() - started > 8000) {
+        reject(new Error("Cloudflare Turnstile did not load. Please refresh and try again."));
+        return;
+      }
+      window.setTimeout(tick, 100);
+    };
+    tick();
+  });
+}
+
+async function initTurnstileWidgets() {
+  const config = await loadTurnstileConfig();
+  const boxes = Array.from(document.querySelectorAll(".turnstile-box"));
+  if (!boxes.length) {
+    return;
+  }
+
+  if (!config.enabled || !config.siteKey) {
+    boxes.forEach((box) => {
+      box.innerHTML = '<div class="turnstile-disabled">CAPTCHA will activate after Cloudflare Turnstile keys are configured.</div>';
+    });
+    return;
+  }
+
+  try {
+    const api = await waitForTurnstile();
+    boxes.forEach((box) => {
+      if (turnstileWidgets.has(box.id)) {
+        return;
+      }
+      const widgetId = api.render(box, {
+        sitekey: config.siteKey,
+        action: box.dataset.action || "auth",
+        theme: "dark",
+        size: "flexible",
+      });
+      turnstileWidgets.set(box.id, widgetId);
+    });
+  } catch (error) {
+    console.error(error);
+    boxes.forEach((box) => {
+      box.innerHTML = '<div class="turnstile-disabled">CAPTCHA could not load. Check your network and refresh.</div>';
+    });
+  }
+}
+
+async function requireTurnstile(action, boxId) {
+  const config = await loadTurnstileConfig();
+  if (!config.enabled) {
+    return "";
+  }
+
+  const box = document.getElementById(boxId);
+  const widgetId = box ? turnstileWidgets.get(box.id) : null;
+  const token = widgetId && window.turnstile ? window.turnstile.getResponse(widgetId) : "";
+  if (!token) {
+    throw new Error("Complete the CAPTCHA verification before continuing.");
+  }
+
+  const response = await fetch("/api/verify-turnstile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ turnstileToken: token, action }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.verified) {
+    if (widgetId && window.turnstile) {
+      window.turnstile.reset(widgetId);
+    }
+    throw new Error(payload.detail || "CAPTCHA verification failed. Please retry.");
+  }
+
+  return token;
 }
 
 async function getSupabaseClient() {
@@ -244,6 +347,7 @@ async function startGoogleOAuth(button, requireTerms, termsCheckbox) {
   const restoreButton = setGoogleButtonLoading(button);
 
   try {
+    await requireTurnstile(requireTerms ? "google-signup" : "google-login", requireTerms ? "turnstile-signup" : "turnstile-login");
     const client = await getSupabaseClient();
     localStorage.setItem("sx_auth_intent", requireTerms ? "signup" : "login");
 
@@ -452,6 +556,7 @@ async function initForgotPasswordPage() {
     localResetEmail = email;
 
     try {
+      await requireTurnstile("forgot-password", "turnstile-forgot");
       const client = await tryGetSupabaseClient();
       if (!client) {
         showUpdateForm();
@@ -548,6 +653,8 @@ async function initForgotPasswordPage() {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+  initTurnstileWidgets();
+
   if (await initForgotPasswordPage()) {
     return;
   }
@@ -594,6 +701,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     setTimeout(async () => {
       try {
+        await requireTurnstile("login", "turnstile-login");
         await saveSecureUser({ email, name: email.split("@")[0] || "User", provider: "local" }, `${email}:${password}`, { provider: "local" });
         showAuthSuccess("login");
         window.location.href = DASHBOARD_PATH;
@@ -618,6 +726,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     setTimeout(async () => {
       try {
+        await requireTurnstile("signup", "turnstile-signup");
         await saveSecureUser({ email, name, provider: "local" }, `${email}:${password}`, { provider: "local" });
         showAuthSuccess("signup");
         window.location.href = DASHBOARD_PATH;

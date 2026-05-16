@@ -3,6 +3,7 @@
  */
 
 const API = "/api";
+const AUTH_CONFIG_ENDPOINT = "/api/auth-config";
 const DEFAULT_MAP_KEY = "e6jRUxTkKH6UOJQnLqvl";
 const DETAILED_STYLE_URL = `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${DEFAULT_MAP_KEY}`;
 const PLOTLY_URL = "https://cdn.plot.ly/plotly-2.29.1.min.js";
@@ -50,6 +51,9 @@ const TRAFFIC_LANE_LABELS = [
     "L2 Sensor",
     "L1 Command",
 ];
+let securityConfigPromise = null;
+let dashboardTurnstileWidget = null;
+let dashboardTurnstileAction = "";
 const SELECTED_BUILDING_COLOR = "#4f8cff";
 const GEOCODER_TYPES = [
     "country",
@@ -65,6 +69,115 @@ const GEOCODER_TYPES = [
     "address",
     "poi",
 ].join(",");
+
+async function loadSecurityConfig() {
+    if (!securityConfigPromise) {
+        securityConfigPromise = fetch(AUTH_CONFIG_ENDPOINT, {
+            headers: { Accept: "application/json" },
+            cache: "no-store",
+        })
+            .then((response) => (response.ok ? response.json() : null))
+            .then((config) => config?.turnstile || { enabled: false, siteKey: "" })
+            .catch((error) => {
+                console.warn("Security config unavailable:", error);
+                return { enabled: false, siteKey: "" };
+            });
+    }
+    return securityConfigPromise;
+}
+
+function waitForDashboardTurnstile() {
+    return new Promise((resolve, reject) => {
+        const started = Date.now();
+        const tick = () => {
+            if (window.turnstile && typeof window.turnstile.render === "function") {
+                resolve(window.turnstile);
+                return;
+            }
+            if (Date.now() - started > 8000) {
+                reject(new Error("Cloudflare Turnstile did not load. Please refresh and try again."));
+                return;
+            }
+            window.setTimeout(tick, 100);
+        };
+        tick();
+    });
+}
+
+async function ensureTurnstileModal(action) {
+    let modal = document.getElementById("turnstile-modal");
+    if (!modal) {
+        modal = document.createElement("div");
+        modal.id = "turnstile-modal";
+        modal.className = "turnstile-modal";
+        modal.innerHTML = `
+            <div class="turnstile-card glass">
+                <button class="turnstile-close" type="button" aria-label="Close"><i class="fas fa-times"></i></button>
+                <div class="turnstile-icon"><i class="fas fa-shield-halved"></i></div>
+                <h3>Security Check</h3>
+                <p>Complete this verification to run protected AI analysis.</p>
+                <div id="dashboard-turnstile"></div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        modal.querySelector(".turnstile-close").addEventListener("click", () => modal.classList.remove("visible"));
+    }
+
+    const config = await loadSecurityConfig();
+    if (!config.enabled) {
+        return { enabled: false, token: "" };
+    }
+
+    modal.classList.add("visible");
+    const api = await waitForDashboardTurnstile();
+    const container = document.getElementById("dashboard-turnstile");
+    if (dashboardTurnstileWidget && dashboardTurnstileAction !== action && typeof api.remove === "function") {
+        api.remove(dashboardTurnstileWidget);
+        dashboardTurnstileWidget = null;
+    }
+
+    if (!dashboardTurnstileWidget) {
+        container.innerHTML = "";
+        dashboardTurnstileWidget = api.render(container, {
+            sitekey: config.siteKey,
+            action,
+            theme: "dark",
+            size: "flexible",
+        });
+        dashboardTurnstileAction = action;
+    } else {
+        api.reset(dashboardTurnstileWidget);
+    }
+
+    return { enabled: true, modal, api, widgetId: dashboardTurnstileWidget };
+}
+
+async function getProtectedActionToken(action) {
+    const challenge = await ensureTurnstileModal(action);
+    if (!challenge.enabled) {
+        return "";
+    }
+
+    return new Promise((resolve, reject) => {
+        const timeout = window.setTimeout(() => {
+            challenge.modal.classList.remove("visible");
+            reject(new Error("Security check timed out. Please try again."));
+        }, 120000);
+
+        const poll = () => {
+            const token = challenge.api.getResponse(challenge.widgetId);
+            if (token) {
+                window.clearTimeout(timeout);
+                challenge.modal.classList.remove("visible");
+                resolve(token);
+                return;
+            }
+            window.setTimeout(poll, 250);
+        };
+        poll();
+    });
+}
+
 const INDIA_ADMIN_AREAS = [
     ["Andhra Pradesh", "State of India", 80.9462, 15.9129],
     ["Arunachal Pradesh", "State of India", 94.7278, 28.2180],
@@ -852,10 +965,14 @@ async function analyzeBuilding(feature, lngLat, point = null) {
     };
 
     try {
+        const turnstileToken = await getProtectedActionToken("building-analysis");
         const response = await fetch(`${API}/building-analyze`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            headers: {
+                "Content-Type": "application/json",
+                "X-Turnstile-Token": turnstileToken,
+            },
+            body: JSON.stringify({ ...payload, turnstileToken }),
         });
 
         if (!response.ok) {
@@ -4082,9 +4199,14 @@ async function runUploadAnalysis() {
     try {
         const formData = new FormData();
         formData.append("file", state.selectedFile);
+        const turnstileToken = await getProtectedActionToken("dataset-analysis");
+        formData.append("turnstileToken", turnstileToken);
 
         const response = await fetch(`${API}/analyze`, {
             method: "POST",
+            headers: {
+                "X-Turnstile-Token": turnstileToken,
+            },
             body: formData,
         });
 
@@ -4116,11 +4238,15 @@ async function runScenario() {
             temperature: Number($("#sl-temp").value),
             soil_moisture: Number($("#sl-moist").value),
         };
+        const turnstileToken = await getProtectedActionToken("scenario-analysis");
 
         const response = await fetch(`${API}/scenario`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
+            headers: {
+                "Content-Type": "application/json",
+                "X-Turnstile-Token": turnstileToken,
+            },
+            body: JSON.stringify({ ...body, turnstileToken }),
         });
         const payload = await response.json();
 
