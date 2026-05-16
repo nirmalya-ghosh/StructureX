@@ -4,7 +4,7 @@ Generates ChatGPT-style natural language explanations from ML outputs.
 
 Architecture:
     1. Template-based engine (no API key needed, always works)
-    2. OpenAI integration (optional, if OPENAI_API_KEY env var set)
+    2. Gemini integration (optional, if GEMINI_API_KEY env var set)
 
 Input:  risk metrics dict, SHAP explanations, infrastructure analysis
 Output: structured natural language report
@@ -311,7 +311,7 @@ def generate_insights_template(
     }
 
 
-async def generate_insights_openai(
+async def generate_insights_gemini(
     risk_score: float,
     failure_probability: float,
     anomaly_score: float,
@@ -319,16 +319,20 @@ async def generate_insights_openai(
     key_metrics: Dict,
 ) -> Optional[Dict[str, str]]:
     """
-    Generate insights using OpenAI API (optional).
+    Generate insights using Gemini API (optional).
     Returns None if API key not configured or call fails.
     """
-    api_key = os.environ.get("OPENAI_API_KEY")
+    from backend.config import GEMINI_API_KEY, GEMINI_MODEL
+
+    api_key = GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         return None
 
     try:
-        import openai
-        client = openai.AsyncOpenAI(api_key=api_key)
+        import google.generativeai as genai
+
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(GEMINI_MODEL)
 
         prompt = f"""You are an expert infrastructure risk analyst. Analyze these results and provide a detailed assessment:
 
@@ -349,17 +353,18 @@ Provide your analysis in this exact JSON structure:
     "time_estimate": "Estimated timeline for potential failure"
 }}"""
 
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            response_format={"type": "json_object"},
+        response = await model.generate_content_async(
+            prompt,
+            generation_config=genai.GenerationConfig(
+                temperature=0.2,
+                response_mime_type="application/json",
+            ),
         )
 
-        return json.loads(response.choices[0].message.content)
+        return json.loads(response.text)
 
     except Exception as e:
-        print(f"[LLM] OpenAI call failed: {e}, falling back to template engine")
+        print(f"[LLM] Gemini call failed: {e}, falling back to template engine")
         return None
 
 
@@ -374,19 +379,19 @@ async def generate_insights(
     key_metrics: Optional[Dict] = None,
 ) -> Dict[str, str]:
     """
-    Main entry point. Tries OpenAI first, falls back to template engine.
+    Main entry point. Tries Gemini first, falls back to template engine.
 
     Input:  all risk metrics + SHAP features + infrastructure analysis
     Output: natural language insights dict
     """
-    # Try OpenAI first
-    openai_result = await generate_insights_openai(
+    # Try Gemini first
+    gemini_result = await generate_insights_gemini(
         risk_score, failure_probability, anomaly_score,
         top_features, key_metrics or {},
     )
 
-    if openai_result:
-        return openai_result
+    if gemini_result:
+        return gemini_result
 
     # Fall back to template engine
     return generate_insights_template(

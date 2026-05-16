@@ -326,6 +326,29 @@ Once the server is running, open:
 http://localhost:8000
 ```
 
+## Google Authentication
+
+StructureX uses Supabase Auth for Google sign-in. Add these values to `.env.local` for local runs, or to your Vercel project environment variables for deployment:
+
+```env
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_ANON_KEY=your_supabase_anon_or_publishable_key
+```
+
+In Supabase, enable **Authentication > Providers > Google**, add your Google OAuth client ID and secret, and set the redirect URL to:
+
+```text
+http://127.0.0.1:8000/auth-callback
+```
+
+For a deployed site, also add:
+
+```text
+https://your-domain.com/auth-callback
+```
+
+Set the Supabase Auth site URL to your app origin, for example `http://127.0.0.1:8000` locally or your production domain in deployment.
+
 ### Health check
 
 You can verify the service is up with:

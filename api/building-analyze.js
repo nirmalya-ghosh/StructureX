@@ -1,4 +1,5 @@
 const { buildingAnalysis, enrichBuildingPayload, json, readJson } = require("./_structurex-data");
+const { generateBuildingAnalysisWithGemini } = require("./gemini");
 
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
@@ -7,5 +8,7 @@ module.exports = async function handler(req, res) {
 
   const body = await readJson(req);
   const enrichedBody = await enrichBuildingPayload(body);
-  return json(res, buildingAnalysis(enrichedBody));
+  const fallback = buildingAnalysis(enrichedBody);
+  const geminiAnalysis = await generateBuildingAnalysisWithGemini(enrichedBody, fallback);
+  return json(res, geminiAnalysis || { ...fallback, ai_source: "fallback" });
 };

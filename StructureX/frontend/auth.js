@@ -4,7 +4,7 @@
  */
 
 const AUTH_CONFIG_ENDPOINT = "/api/auth-config";
-const AUTH_CALLBACK_PATH = "/auth-callback.html";
+const AUTH_CALLBACK_PATH = "/auth-callback";
 const PASSWORD_RESET_PATH = "/forgot-password";
 const DASHBOARD_PATH = "/dashboard";
 const LEGACY_USER_KEY = "sx_user";
@@ -133,7 +133,8 @@ async function loadAuthConfig() {
   const config = await response.json();
   if (!config.configured || !config.supabaseUrl || !config.supabaseAnonKey) {
     throw new Error(
-      "Supabase is not configured on Vercel. Add SUPABASE_URL and SUPABASE_ANON_KEY environment variables."
+      config.message ||
+        "Supabase is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY to .env.local or your Vercel environment."
     );
   }
 
@@ -267,7 +268,7 @@ async function startGoogleOAuth(button, requireTerms, termsCheckbox) {
     }
   } catch (error) {
     console.error("Google auth failed:", error);
-    window.alert(error.message || "Google sign-in could not start. Please try again.");
+    window.alert(error.message || "Google sign-in could not start. Check Supabase Google provider and redirect URL settings.");
     restoreButton();
   }
 }

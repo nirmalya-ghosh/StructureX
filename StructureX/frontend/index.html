@@ -25,7 +25,7 @@
             const oauthSearch = new URLSearchParams(window.location.search);
             const hasOAuthReturn = oauthSearch.has('code') || oauthSearch.has('error') || window.location.hash.includes('access_token');
             if (hasOAuthReturn) {
-                window.location.replace('/auth-callback.html' + window.location.search + window.location.hash);
+                window.location.replace('/auth-callback' + window.location.search + window.location.hash);
                 return;
             }
 

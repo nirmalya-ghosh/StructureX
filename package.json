@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "node scripts/build-static-site.mjs"
+    "build": "node scripts/build-static-site.mjs",
+    "start": "node local-static-server.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3"

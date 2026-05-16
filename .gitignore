@@ -3,7 +3,8 @@ node_modules/
 frontend/node_modules/ 
 frontend/.next/
 .vercel/
-.env 
+.env
+.env.local
 dist/ 
 StructureX/.git*/
 StructureX/**/__pycache__/
@@ -13,3 +14,8 @@ StructureX/*stdout*.txt
 StructureX/*error*.txt
 StructureX/*err*.txt
 StructureX/*out*.txt
+*stderr*.txt
+*stdout*.txt
+*error*.txt
+*err*.txt
+*out*.txt

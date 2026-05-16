@@ -33,8 +33,20 @@
       "destination": "/forgot-password.html"
     },
     {
+      "source": "/auth-callback",
+      "destination": "/auth-callback.html"
+    },
+    {
       "source": "/dashboard",
       "destination": "/index.html"
+    },
+    {
+      "source": "/terms",
+      "destination": "/terms.html"
+    },
+    {
+      "source": "/privacy",
+      "destination": "/privacy.html"
     }
   ]
 }

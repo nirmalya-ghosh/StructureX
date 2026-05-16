@@ -4158,7 +4158,7 @@ function normalizeScenarioResponse(payload) {
         time_to_failure: getTimeToFailure(Number(prediction.failure_probability || 0)),
         time_series: payload.time_series || {},
         shap_features: payload.explanation || {},
-        llm_explanation: {
+        llm_explanation: payload.llm_explanation || {
             summary: `Scenario simulation produced a ${prediction.risk_category || "SAFE"} risk profile with a risk score of ${Number(prediction.risk_score || 0).toFixed(1)}.`,
             drivers: "Scenario mode focuses on live model outputs. Upload a CSV for full narrative analysis, validation, and chart bundles.",
             recommendations: buildScenarioRecommendations(prediction),
