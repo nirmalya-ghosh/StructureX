@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 520" role="img" aria-labelledby="title desc">
+  <title id="title">Structure-X</title>
+  <desc id="desc">Structure-X metallic blue building and X logo.</desc>
+  <defs>
+    <linearGradient id="blueA" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.42" stop-color="#0b73d9"/>
+      <stop offset="1" stop-color="#061a48"/>
+    </linearGradient>
+    <linearGradient id="blueB" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#9be8ff"/>
+      <stop offset="0.28" stop-color="#0088ff"/>
+      <stop offset="1" stop-color="#031433"/>
+    </linearGradient>
+    <linearGradient id="steel" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.26" stop-color="#cfd8e3"/>
+      <stop offset="0.52" stop-color="#687686"/>
+      <stop offset="0.76" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#2c3848"/>
+    </linearGradient>
+    <linearGradient id="darkSteel" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#142033"/>
+      <stop offset="0.55" stop-color="#020617"/>
+      <stop offset="1" stop-color="#5f6d7d"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.48" stop-color="#aab4c0"/>
+      <stop offset="1" stop-color="#f8fafc"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#020617" flood-opacity="0.75"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#38bdf8" flood-opacity="0.38"/>
+    </filter>
+    <filter id="textGlow" x="-10%" y="-30%" width="120%" height="180%">
+      <feDropShadow dx="0" dy="6" stdDeviation="5" flood-color="#020617" flood-opacity="0.8"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#60a5fa" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <path d="M118 300 L270 244 L353 297 L463 220 L598 276 L792 255 L850 292 L548 333 L460 289 L341 349 Z" fill="#020617"/>
+    <path d="M173 285 L173 202 L223 160 L260 184 L260 285 Z" fill="url(#blueA)" stroke="#dbeafe" stroke-width="3"/>
+    <path d="M270 285 L270 148 L326 92 L374 132 L374 285 Z" fill="url(#blueB)" stroke="#dbeafe" stroke-width="3"/>
+    <path d="M385 285 L385 91 L443 38 L491 100 L491 285 Z" fill="url(#blueA)" stroke="#dbeafe" stroke-width="3"/>
+
+    <path d="M218 180 L248 197 L248 280 L218 280 Z" fill="url(#steel)" opacity="0.94"/>
+    <path d="M318 133 L351 158 L351 280 L318 280 Z" fill="url(#steel)" opacity="0.94"/>
+    <path d="M451 86 L481 121 L481 280 L451 280 Z" fill="url(#steel)" opacity="0.94"/>
+    <path d="M280 167 L304 145 L304 282 L280 282 Z" fill="#031026" opacity="0.82"/>
+    <path d="M388 96 L420 67 L420 282 L388 282 Z" fill="#031026" opacity="0.78"/>
+
+    <path d="M489 248 L654 179 L524 303 L682 364 L470 307 L312 378 L428 290 L300 214 Z" fill="url(#darkSteel)" stroke="#e5edf7" stroke-width="7" stroke-linejoin="round"/>
+    <path d="M331 225 L462 283 L646 187 L515 306 L666 357 L489 304 L336 370 L435 291 Z" fill="url(#steel)" stroke="#07101f" stroke-width="4" stroke-linejoin="round"/>
+    <path d="M458 286 L515 307 L489 330 L432 302 Z" fill="url(#blueA)" opacity="0.95"/>
+
+    <path d="M612 264 L612 229 L758 252 L814 286 L681 268 Z" fill="#07101f" stroke="#dbeafe" stroke-width="3"/>
+    <path d="M634 239 L655 243 L655 266 L634 263 Z" fill="url(#blueB)"/>
+    <path d="M662 244 L682 248 L682 270 L662 267 Z" fill="#38bdf8"/>
+    <path d="M690 249 L710 252 L710 273 L690 270 Z" fill="url(#blueB)"/>
+    <path d="M718 254 L739 258 L739 277 L718 274 Z" fill="#0ea5e9"/>
+    <path d="M746 260 L770 265 L770 281 L746 278 Z" fill="#075da8"/>
+
+    <path d="M92 318 C260 300 410 315 536 329 C650 342 750 330 864 314" fill="none" stroke="url(#steel)" stroke-width="4" opacity="0.9"/>
+    <path d="M125 433 C335 449 579 448 811 432" fill="none" stroke="#38bdf8" stroke-width="4" opacity="0.85"/>
+    <path d="M132 442 C360 457 576 457 802 443" fill="none" stroke="#e5e7eb" stroke-width="2" opacity="0.5"/>
+  </g>
+
+  <g filter="url(#textGlow)">
+    <text x="108" y="410" font-family="Inter, Arial Black, Arial, sans-serif" font-size="72" font-weight="900" letter-spacing="2" fill="url(#word)" stroke="#111827" stroke-width="4">STRUCTURE</text>
+    <text x="702" y="410" font-family="Inter, Arial Black, Arial, sans-serif" font-size="76" font-weight="900" letter-spacing="1" fill="url(#blueA)" stroke="#0f172a" stroke-width="4">-X</text>
+  </g>
+</svg>

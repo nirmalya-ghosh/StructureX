@@ -403,6 +403,8 @@ const state = {
     buildingSourceName: null,
     buildingSourceLayer: "building",
     selectedBuildingFeatureIds: [],
+    buildingScanAnimationFrame: null,
+    buildingScanStartedAt: 0,
     userLocation: null,
     locationPromptVisible: false,
     weatherTarget: null,
@@ -539,6 +541,7 @@ function initMap() {
             new maptilersdk.NavigationControl({ showCompass: true, showZoom: true }),
             "bottom-right"
         );
+        addLiveLocationMapControl();
 
         state.map.on("load", () => {
             state.mapReady = true;
@@ -781,9 +784,71 @@ function add3DBuildings() {
             },
             labelLayerId
         );
+
+        state.map.addLayer(
+            {
+                id: "building-scan-fill",
+                source: "building-highlight-src",
+                type: "fill",
+                paint: {
+                    "fill-color": "#60a5fa",
+                    "fill-opacity": 0,
+                },
+            },
+            labelLayerId
+        );
+
+        state.map.addLayer(
+            {
+                id: "building-scan-outline",
+                source: "building-highlight-src",
+                type: "line",
+                paint: {
+                    "line-color": "#bfdbfe",
+                    "line-opacity": 0,
+                    "line-width": 1.5,
+                    "line-blur": 0.5,
+                },
+            },
+            labelLayerId
+        );
     } catch (error) {
         console.warn("3D building setup skipped", error);
     }
+}
+
+function addLiveLocationMapControl() {
+    if (!state.map || !window.maptilersdk || $("#map-live-location-control")) {
+        return;
+    }
+
+    const control = {
+        onAdd() {
+            const group = document.createElement("div");
+            group.className = "maplibregl-ctrl maplibregl-ctrl-group sx-map-location-control";
+            group.id = "map-live-location-control";
+
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "sx-map-location-btn";
+            button.setAttribute("aria-label", "Return to my live location");
+            button.title = "Return to my live location";
+            button.innerHTML = '<i class="fas fa-location-crosshairs"></i>';
+            button.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                requestUserLocation({ source: "map-live-location-control" });
+            });
+
+            group.appendChild(button);
+            return group;
+        },
+        onRemove() {
+            $("#map-live-location-control")?.remove();
+        },
+    };
+
+    state.map.addControl(control, "bottom-right");
 }
 
 function initBuildingInteraction() {
@@ -912,9 +977,10 @@ function highlightBuilding(feature, lngLat, point = null) {
         type: "FeatureCollection",
         features: selectedFeatures,
     });
+    startBuildingScanAnimation();
 
     if (lngLat) {
-        addOrMoveMarker([lngLat.lng, lngLat.lat], { mode: "selected scanning" });
+        addOrMoveMarker([lngLat.lng, lngLat.lat], { mode: "selected" });
     }
 }
 
@@ -1128,8 +1194,58 @@ function clearFallbackBuildingHighlight() {
 }
 
 function clearBuildingHighlight() {
+    stopBuildingScanAnimation();
     resetBuildingPaintHighlight();
     clearFallbackBuildingHighlight();
+}
+
+function startBuildingScanAnimation() {
+    stopBuildingScanAnimation();
+    if (!state.map?.getLayer("building-scan-fill") || !state.map.getLayer("building-scan-outline")) {
+        return;
+    }
+
+    state.buildingScanStartedAt = performance.now();
+
+    const animate = (time) => {
+        if (!state.map?.getLayer("building-scan-fill") || !state.map.getLayer("building-scan-outline")) {
+            state.buildingScanAnimationFrame = null;
+            return;
+        }
+
+        const elapsed = (time - state.buildingScanStartedAt) / 1000;
+        const wave = (Math.sin(elapsed * Math.PI * 1.35) + 1) / 2;
+        const pulse = 0.18 + wave * 0.24;
+        const outline = 0.55 + wave * 0.35;
+        const width = 1.5 + wave * 2.4;
+
+        try {
+            state.map.setPaintProperty("building-scan-fill", "fill-opacity", pulse);
+            state.map.setPaintProperty("building-scan-outline", "line-opacity", outline);
+            state.map.setPaintProperty("building-scan-outline", "line-width", width);
+        } catch (error) {
+            console.warn("Building scan animation stopped", error);
+            state.buildingScanAnimationFrame = null;
+            return;
+        }
+
+        state.buildingScanAnimationFrame = window.requestAnimationFrame(animate);
+    };
+
+    state.buildingScanAnimationFrame = window.requestAnimationFrame(animate);
+}
+
+function stopBuildingScanAnimation() {
+    if (state.buildingScanAnimationFrame !== null) {
+        window.cancelAnimationFrame(state.buildingScanAnimationFrame);
+        state.buildingScanAnimationFrame = null;
+    }
+    if (state.map?.getLayer("building-scan-fill")) {
+        state.map.setPaintProperty("building-scan-fill", "fill-opacity", 0);
+    }
+    if (state.map?.getLayer("building-scan-outline")) {
+        state.map.setPaintProperty("building-scan-outline", "line-opacity", 0);
+    }
 }
 
 function dedupeFeatures(features) {
@@ -1328,8 +1444,6 @@ function addOrMoveMarker(coords, options = {}) {
         markerElement.className = `infra-marker ${mode}`;
         markerElement.innerHTML = `
             <span class="marker-ring"></span>
-            <span class="marker-scan"></span>
-            <span class="marker-scan marker-scan-delayed"></span>
             <i class="fas fa-building"></i>
         `;
         state.mapMarker = new maptilersdk.Marker({ element: markerElement, anchor: "center" })
@@ -2151,11 +2265,15 @@ function acquireBestUserPosition() {
         };
 
         const consider = (position) => {
-            const accuracy = Number(position.coords?.accuracy || Number.MAX_SAFE_INTEGER);
-            const bestAccuracy = Number(bestPosition?.coords?.accuracy || Number.MAX_SAFE_INTEGER);
+            const reportedAccuracy = Number(position.coords?.accuracy);
+            const accuracy = Number.isFinite(reportedAccuracy) ? reportedAccuracy : Number.MAX_SAFE_INTEGER;
+            const reportedBestAccuracy = Number(bestPosition?.coords?.accuracy);
+            const bestAccuracy = Number.isFinite(reportedBestAccuracy) ? reportedBestAccuracy : Number.MAX_SAFE_INTEGER;
             if (!bestPosition || accuracy < bestAccuracy) {
                 bestPosition = position;
-                $("#search-meta").textContent = `Refining live GPS fix... best accuracy about ${Math.round(accuracy)}m.`;
+                $("#search-meta").textContent = Number.isFinite(reportedAccuracy)
+                    ? `Refining live GPS fix... best accuracy about ${Math.round(accuracy)}m.`
+                    : "Refining live GPS fix...";
             }
             if (accuracy <= 20) {
                 finish(position);

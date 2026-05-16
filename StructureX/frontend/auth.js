@@ -332,7 +332,7 @@ async function finishOAuthCallback() {
     console.error("Auth callback failed:", error);
     document.body.classList.add("callback-error");
     setStatus(error.message || "Google sign-in could not be completed.");
-    const panel = document.querySelector(".legal-panel");
+    const panel = document.querySelector(".auth-loading-panel, .legal-panel");
     if (panel && !panel.querySelector(".auth-callback-actions")) {
       const action = document.createElement("p");
       action.className = "auth-callback-actions";
