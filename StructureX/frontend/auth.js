@@ -211,8 +211,36 @@ function getPasswordResetUrl() {
   return `${window.location.origin}${PASSWORD_RESET_PATH}`;
 }
 
-function showAuthSuccess(intent) {
-  window.alert(intent === "signup" ? "Sign up successful." : "Login successful.");
+function showAuthLoading(message = "Opening dashboard...") {
+  let shell = document.querySelector(".auth-loading-shell");
+  if (!shell) {
+    shell = document.createElement("main");
+    shell.className = "auth-loading-shell auth-loading-overlay";
+    shell.innerHTML = `
+      <article class="auth-loading-panel">
+        <div class="auth-logo-loader" aria-hidden="true">
+          <span class="auth-logo-orbit"></span>
+          <span class="auth-logo-scan"></span>
+          <img src="/static/structurex-logo.svg" alt="">
+        </div>
+        <div class="legal-kicker">StructureX Auth</div>
+        <h1>Completing sign in</h1>
+        <p id="auth-callback-status"></p>
+      </article>
+    `;
+    document.body.appendChild(shell);
+  }
+
+  const status = document.getElementById("auth-callback-status");
+  if (status) {
+    status.textContent = message;
+  }
+  document.body.classList.add("auth-loading-active");
+}
+
+function openDashboardAfterAuth(message = "Opening dashboard...") {
+  showAuthLoading(message);
+  window.setTimeout(() => window.location.replace(DASHBOARD_PATH), 950);
 }
 
 function setResetStatus(node, message, type = "info") {
@@ -437,8 +465,7 @@ async function finishOAuthCallback() {
         const intent = localStorage.getItem("sx_auth_intent") || "login";
         localStorage.removeItem("sx_auth_intent");
         setStatus("Opening dashboard...");
-        showAuthSuccess(intent);
-        window.location.replace(DASHBOARD_PATH);
+        openDashboardAfterAuth("Opening dashboard...");
         return true;
       }
 
@@ -718,8 +745,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       try {
         await requireTurnstile("login", loginForm);
         await saveSecureUser({ email, name: email.split("@")[0] || "User", provider: "local" }, `${email}:${password}`, { provider: "local" });
-        showAuthSuccess("login");
-        window.location.href = DASHBOARD_PATH;
+        openDashboardAfterAuth("Login verified. Opening dashboard...");
       } catch (error) {
         console.error("Secure local login failed:", error);
         window.alert(error.message || "Secure local login failed.");
@@ -743,8 +769,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       try {
         await requireTurnstile("signup", signupForm);
         await saveSecureUser({ email, name, provider: "local" }, `${email}:${password}`, { provider: "local" });
-        showAuthSuccess("signup");
-        window.location.href = DASHBOARD_PATH;
+        openDashboardAfterAuth("Account created. Opening dashboard...");
       } catch (error) {
         console.error("Secure local signup failed:", error);
         window.alert(error.message || "Secure local signup failed.");

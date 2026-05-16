@@ -677,6 +677,28 @@ body::-webkit-scrollbar-thumb {
     z-index: 10;
 }
 
+.auth-loading-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    width: 100%;
+    display: grid;
+    place-items: center;
+    padding: 24px 16px;
+    background:
+        radial-gradient(circle at 50% 20%, rgba(59, 130, 246, 0.18), transparent 36%),
+        rgba(2, 6, 23, 0.88);
+    backdrop-filter: blur(18px);
+}
+
+.auth-loading-active .auth-container,
+.auth-loading-active .auth-header,
+.auth-loading-active .auth-footer {
+    pointer-events: none;
+    filter: blur(5px);
+    opacity: 0.3;
+}
+
 .auth-loading-panel {
     min-height: 520px;
     display: grid;
