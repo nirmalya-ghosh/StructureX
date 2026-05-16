@@ -526,10 +526,13 @@ function initMap() {
             zoom: DEFAULT_VIEW.zoom,
             pitch: DEFAULT_VIEW.pitch,
             bearing: DEFAULT_VIEW.bearing,
+            minZoom: 2,
+            maxZoom: 20.5,
             antialias: false,
             maxPitch: 74,
             fullscreenControl: false,
             navigationControl: false,
+            refreshExpiredTiles: true,
         });
 
         state.map.addControl(
@@ -828,7 +831,7 @@ async function analyzeBuilding(feature, lngLat, point = null) {
     centerOnCoordinates([lngLat.lng, lngLat.lat], 17.2);
     openBuildingPanelLoading(lngLat);
 
-    const locationMeta = await reverseGeocode(lngLat.lng, lngLat.lat);
+    const locationMeta = await reverseGeocode(lngLat.lng, lngLat.lat, feature);
     if (!isActiveBuildingRequest(requestId, selectionKey)) {
         return;
     }
@@ -848,6 +851,7 @@ async function analyzeBuilding(feature, lngLat, point = null) {
         height,
         address: locationMeta.address,
         area_name: locationMeta.area,
+        location_meta: locationMeta,
         properties: feature.properties || {},
     };
 
@@ -1481,8 +1485,11 @@ function renderMetadataSection(feature, locationMeta, profile) {
     const details = [
         ["Map source label", locationMeta.label],
         ["Mapped district", locationMeta.area],
+        ["Address confidence", locationMeta.confidence ? `${titleCaseWords(locationMeta.confidence)} via ${locationMeta.source || "live geocoding"}` : ""],
+        ["Map data checked", locationMeta.checkedAt ? new Date(locationMeta.checkedAt).toLocaleString() : locationMeta.mapDataFreshness],
         ["Feature kind", profile.featureKind],
         ["Footprint profile", profile.footprintProfile],
+        ["Coordinates", profile.coordinates],
     ].filter(([, value]) => value);
 
     return `
@@ -1553,37 +1560,67 @@ function isActiveBuildingRequest(requestId, selectionKey) {
     );
 }
 
-async function reverseGeocode(lng, lat) {
+function getFeatureAddressHint(feature) {
+    const props = feature?.properties || {};
+    const houseNumber = props["addr:housenumber"] || props.housenumber || props.house_number;
+    const street = props["addr:street"] || props.street || props.road;
+    const city = props["addr:city"] || props.city;
+    const postcode = props["addr:postcode"] || props.postcode;
+    const name = props.name || props["name:en"];
+    const parts = [
+        [houseNumber, street].filter(Boolean).join(" "),
+        name,
+        city,
+        postcode,
+    ].filter(Boolean);
+    return uniqueValues(parts).join(", ");
+}
+
+function hasPreciseFeatureAddress(feature) {
+    const props = feature?.properties || {};
+    return Boolean(
+        (props["addr:housenumber"] || props.housenumber || props.house_number) &&
+        (props["addr:street"] || props.street || props.road)
+    );
+}
+
+async function reverseGeocode(lng, lat, feature = null) {
+    const coordinateLabel = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    const featureAddress = getFeatureAddressHint(feature);
+    const preciseFeatureAddress = hasPreciseFeatureAddress(feature);
     const fallback = {
-        label: "Selected structure",
-        address: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+        label: feature?.properties?.name || "Selected structure",
+        address: featureAddress || coordinateLabel,
         area: "Mapped zone",
+        confidence: preciseFeatureAddress ? "high" : featureAddress ? "medium" : "coordinate",
+        source: featureAddress ? "Vector tile address tags" : "Coordinates",
+        coordinates: { lat, lng },
+        mapDataFreshness: "Live provider lookup at selection time",
     };
 
     try {
-        const response = await fetch(
-            `https://api.maptiler.com/geocoding/${lng},${lat}.json?key=${DEFAULT_MAP_KEY}`
-        );
+        const response = await fetch(`${API}/reverse-geocode`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                lng,
+                lat,
+                maptilerKey: DEFAULT_MAP_KEY,
+                featureProperties: feature?.properties || {},
+                featureAddress,
+            }),
+        });
         if (!response.ok) {
             return fallback;
         }
         const payload = await response.json();
-        const feature = payload.features?.[0];
-        if (!feature) {
-            return fallback;
-        }
-
-        const context = feature.context || [];
-        const area =
-            context.find((item) => item.id.startsWith("place"))?.text ||
-            context.find((item) => item.id.startsWith("region"))?.text ||
-            feature.text ||
-            fallback.area;
-
         return {
-            label: feature.text || "Selected structure",
-            address: feature.place_name || fallback.address,
-            area,
+            ...fallback,
+            ...payload,
+            label: payload.label || fallback.label,
+            address: payload.address || fallback.address,
+            area: payload.area || fallback.area,
+            coordinates: payload.coordinates || fallback.coordinates,
         };
     } catch (error) {
         console.warn("Reverse geocode failed", error);
@@ -2079,27 +2116,87 @@ function hideLocationPrompt() {
     }, 180);
 }
 
-function requestUserLocation({ source = "manual" } = {}) {
+function acquireBestUserPosition() {
+    const highAccuracyOptions = {
+        enableHighAccuracy: true,
+        timeout: 20000,
+        maximumAge: 0,
+    };
+
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        let bestPosition = null;
+        let watchId = null;
+
+        const finish = (position) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+            }
+            resolve(position);
+        };
+
+        const fail = (error) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+            }
+            reject(error);
+        };
+
+        const consider = (position) => {
+            const accuracy = Number(position.coords?.accuracy || Number.MAX_SAFE_INTEGER);
+            const bestAccuracy = Number(bestPosition?.coords?.accuracy || Number.MAX_SAFE_INTEGER);
+            if (!bestPosition || accuracy < bestAccuracy) {
+                bestPosition = position;
+                $("#search-meta").textContent = `Refining live GPS fix... best accuracy about ${Math.round(accuracy)}m.`;
+            }
+            if (accuracy <= 20) {
+                finish(position);
+            }
+        };
+
+        navigator.geolocation.getCurrentPosition(consider, fail, highAccuracyOptions);
+        watchId = navigator.geolocation.watchPosition(consider, (error) => {
+            if (bestPosition) {
+                finish(bestPosition);
+            } else {
+                fail(error);
+            }
+        }, highAccuracyOptions);
+
+        window.setTimeout(() => {
+            if (bestPosition) {
+                finish(bestPosition);
+            } else {
+                fail(new Error("Location fix timed out"));
+            }
+        }, 22000);
+    });
+}
+
+async function requestUserLocation({ source = "manual" } = {}) {
     if (!navigator.geolocation) {
         $("#search-meta").textContent = "Your browser does not support live location detection.";
         hideLocationPrompt();
         return;
     }
 
-    $("#search-meta").textContent = "Waiting for browser location permission...";
-    navigator.geolocation.getCurrentPosition(
-        (position) => applyUserLocation(position, source),
-        (error) => {
-            console.warn("Location permission failed", error);
-            $("#search-meta").textContent = "Location permission was not enabled. You can still search any place manually.";
-            hideLocationPrompt();
-        },
-        {
-            enableHighAccuracy: true,
-            timeout: 12000,
-            maximumAge: 60000,
-        }
-    );
+    $("#search-meta").textContent = "Waiting for browser location permission and high-accuracy GPS fix...";
+    try {
+        const position = await acquireBestUserPosition();
+        await applyUserLocation(position, source);
+    } catch (error) {
+        console.warn("Location permission failed", error);
+        $("#search-meta").textContent = "Location permission or high-accuracy GPS was not enabled. You can still search any exact address manually.";
+        hideLocationPrompt();
+    }
 }
 
 async function applyUserLocation(position, source) {
@@ -2111,7 +2208,7 @@ async function applyUserLocation(position, source) {
     const locationMeta = await reverseGeocode(lng, lat);
     const exactLabel = `${locationMeta.address} (${lat.toFixed(5)}, ${lng.toFixed(5)})`;
     $("#place-search").value = locationMeta.label || "My current location";
-    $("#search-meta").textContent = `Current location: ${exactLabel}${accuracy ? `, accuracy about ${accuracy}m` : ""}.`;
+    $("#search-meta").textContent = `Current location: ${exactLabel}${accuracy ? `, GPS accuracy about ${accuracy}m` : ""}. Address source: ${locationMeta.source || "live reverse geocode"}.`;
 
     setWeatherTarget({
         name: locationMeta.label || "My current location",

@@ -401,6 +401,7 @@ function deriveBuildingContext(payload = {}) {
   const address = String(payload.address || "selected structure");
   const areaName = String(payload.area_name || "mapped zone");
   const properties = payload.properties || {};
+  const locationMeta = payload.location_meta || {};
   const assetType = String(properties.type || "building").toLowerCase();
   const estimatedFloors = Math.max(1, Math.round(height / 3.5));
   const isHighrise = height >= 60 || estimatedFloors >= 18;
@@ -413,6 +414,10 @@ function deriveBuildingContext(payload = {}) {
     address,
     areaName,
     assetType,
+    locationMeta,
+    addressConfidence: locationMeta.confidence || "inferred",
+    addressSource: locationMeta.source || "map selection",
+    addressCheckedAt: locationMeta.checkedAt || payload.live_data_checked_at || null,
     liveWeather: payload.live_weather || null,
     recentSeismicity: payload.recent_seismicity || null,
     liveDataSources: payload.live_data_sources || [],
@@ -635,7 +640,7 @@ function buildingAnalysis(payload = {}) {
     operational_exposure: occupancyProfile,
     inspection_priority: inspectionPriority,
     confidence_notes:
-      `This calibrated scan is building-specific but inference-led. It uses map height, asset heuristics, regional hazard, climate exposure, deterministic location variation, and live Open-Meteo / USGS signals when available${context.liveDataCheckedAt ? ` checked at ${context.liveDataCheckedAt}` : ""}; it is not a substitute for drawings, material tests, or on-site structural inspection.`,
+      `This calibrated scan is building-specific but inference-led. The address was resolved with ${context.addressConfidence} confidence from ${context.addressSource}${context.addressCheckedAt ? ` at ${context.addressCheckedAt}` : ""}. It uses map height, footprint/address metadata, asset heuristics, regional hazard, climate exposure, deterministic location variation, and live Open-Meteo / USGS signals when available${context.liveDataCheckedAt ? ` checked at ${context.liveDataCheckedAt}` : ""}; it is not a substitute for drawings, material tests, or on-site structural inspection.`,
     data_gaps:
       "Highest-value missing inputs are structural drawings, construction year, retrofit history, material strengths, foundation details, occupancy load regime, crack / corrosion observations, and measured tilt, vibration, or settlement data.",
     estimated_floors: context.estimatedFloors,
