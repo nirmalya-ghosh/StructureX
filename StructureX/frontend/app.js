@@ -421,6 +421,10 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
 let plotlyPromise = null;
+let securityConfigPromise = null;
+let dashboardTurnstileWidgetId = null;
+let dashboardTurnstileResolver = null;
+let dashboardTurnstileRejecter = null;
 const plotlyRenderQueue = new Map();
 
 function loadPlotly() {
@@ -507,6 +511,109 @@ function init() {
     updateGauge(0, "SAFE");
     setSystemStatus("System online");
     warmPlotly();
+}
+
+async function loadSecurityConfig() {
+    if (!securityConfigPromise) {
+        securityConfigPromise = fetch(`${API}/auth-config`, {
+            headers: { Accept: "application/json" },
+            cache: "no-store",
+        })
+            .then((response) => response.ok ? response.json() : {})
+            .catch(() => ({}));
+    }
+    return securityConfigPromise;
+}
+
+function waitForDashboardTurnstile() {
+    if (window.turnstile?.render) {
+        return Promise.resolve(window.turnstile);
+    }
+
+    return new Promise((resolve, reject) => {
+        let attempts = 0;
+        const timer = window.setInterval(() => {
+            attempts += 1;
+            if (window.turnstile?.render) {
+                window.clearInterval(timer);
+                resolve(window.turnstile);
+                return;
+            }
+            if (attempts > 80) {
+                window.clearInterval(timer);
+                reject(new Error("CAPTCHA could not load. Refresh and try again."));
+            }
+        }, 100);
+    });
+}
+
+function ensureTurnstileModal() {
+    let modal = $("#turnstile-modal");
+    if (modal) {
+        return modal;
+    }
+
+    modal = document.createElement("div");
+    modal.id = "turnstile-modal";
+    modal.className = "turnstile-modal";
+    modal.innerHTML = `
+        <div class="turnstile-card glass">
+            <div class="turnstile-card-icon"><i class="fas fa-shield-halved"></i></div>
+            <div class="turnstile-card-copy">
+                <strong>Security verification</strong>
+                <span>Complete this check to run protected AI analysis.</span>
+            </div>
+            <div id="dashboard-turnstile-box" class="dashboard-turnstile-box"></div>
+            <button type="button" id="turnstile-cancel">Cancel</button>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    $("#turnstile-cancel")?.addEventListener("click", () => {
+        modal.classList.remove("visible");
+        dashboardTurnstileRejecter?.(new Error("Security verification was cancelled."));
+        dashboardTurnstileResolver = null;
+        dashboardTurnstileRejecter = null;
+    });
+    return modal;
+}
+
+async function getProtectedActionToken(action) {
+    const config = await loadSecurityConfig();
+    const turnstileConfig = config.turnstile || {};
+    if (!turnstileConfig.enabled || !turnstileConfig.siteKey) {
+        return "";
+    }
+
+    const turnstile = await waitForDashboardTurnstile();
+    const modal = ensureTurnstileModal();
+    const box = $("#dashboard-turnstile-box");
+    modal.classList.add("visible");
+
+    return new Promise((resolve, reject) => {
+        dashboardTurnstileResolver = resolve;
+        dashboardTurnstileRejecter = reject;
+
+        const complete = (token) => {
+            modal.classList.remove("visible");
+            dashboardTurnstileResolver = null;
+            dashboardTurnstileRejecter = null;
+            resolve(token);
+        };
+
+        if (dashboardTurnstileWidgetId !== null) {
+            turnstile.reset(dashboardTurnstileWidgetId);
+            return;
+        }
+
+        dashboardTurnstileWidgetId = turnstile.render(box, {
+            sitekey: turnstileConfig.siteKey,
+            theme: "dark",
+            action,
+            callback: complete,
+            "expired-callback": () => {},
+            "error-callback": () => reject(new Error("Security verification failed. Please retry.")),
+        });
+    });
 }
 
 function initMap() {
@@ -922,10 +1029,14 @@ async function analyzeBuilding(feature, lngLat, point = null) {
     };
 
     try {
+        const turnstileToken = await getProtectedActionToken("building-analysis");
         const response = await fetch(`${API}/building-analyze`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            headers: {
+                "Content-Type": "application/json",
+                ...(turnstileToken ? { "X-Turnstile-Token": turnstileToken } : {}),
+            },
+            body: JSON.stringify({ ...payload, turnstileToken }),
         });
 
         if (!response.ok) {
@@ -4298,9 +4409,11 @@ async function runUploadAnalysis() {
     try {
         const formData = new FormData();
         formData.append("file", state.selectedFile);
+        const turnstileToken = await getProtectedActionToken("dataset-analysis");
 
         const response = await fetch(`${API}/analyze`, {
             method: "POST",
+            headers: turnstileToken ? { "X-Turnstile-Token": turnstileToken } : undefined,
             body: formData,
         });
 
@@ -4332,11 +4445,15 @@ async function runScenario() {
             temperature: Number($("#sl-temp").value),
             soil_moisture: Number($("#sl-moist").value),
         };
+        const turnstileToken = await getProtectedActionToken("scenario-analysis");
 
         const response = await fetch(`${API}/scenario`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
+            headers: {
+                "Content-Type": "application/json",
+                ...(turnstileToken ? { "X-Turnstile-Token": turnstileToken } : {}),
+            },
+            body: JSON.stringify({ ...body, turnstileToken }),
         });
         const payload = await response.json();
 

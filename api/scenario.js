@@ -1,12 +1,19 @@
 const { json, readJson, scenarioResponse } = require("./_structurex-data");
 const { generateRiskInsightsWithGemini } = require("./gemini");
+const { rateLimit, requireTurnstile } = require("./security");
 
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
     return json(res, { detail: "Method not allowed" }, 405);
   }
+  if (!rateLimit(req, res, "api-scenario", { limit: 12 })) {
+    return;
+  }
 
   const body = await readJson(req);
+  if (!(await requireTurnstile(req, res, body, "scenario-analysis"))) {
+    return;
+  }
   const fallback = scenarioResponse(body);
   const prediction = fallback.prediction || {};
   const fallbackInsights = {

@@ -9,6 +9,7 @@
     <link rel="shortcut icon" href="/static/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/static/favicon.svg">
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="preconnect" href="https://challenges.cloudflare.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -77,6 +78,8 @@
                         <i class="fas fa-arrow-right"></i>
                     </button>
 
+                    <div class="turnstile-box" data-turnstile-action="login"></div>
+
                     <div class="divider">
                         <span>OR</span>
                     </div>
@@ -134,6 +137,8 @@
                         <i class="fas fa-user-plus"></i>
                     </button>
 
+                    <div class="turnstile-box" data-turnstile-action="signup"></div>
+
                     <div class="divider">
                         <span>OR</span>
                     </div>
@@ -157,6 +162,7 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
     <script src="/static/auth.js?v=29" defer></script>
 </body>
 </html>

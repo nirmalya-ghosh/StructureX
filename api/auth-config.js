@@ -1,4 +1,5 @@
 const { json } = require("./_structurex-data");
+const { getTurnstileConfig } = require("./security");
 
 function readEnv(...names) {
   for (const name of names) {
@@ -45,6 +46,10 @@ module.exports = function handler(req, res) {
     callbackPath,
     callbackUrl,
     provider: "google",
+    turnstile: {
+      enabled: getTurnstileConfig().enabled,
+      siteKey: getTurnstileConfig().siteKey,
+    },
     message: configured
       ? "Supabase Google auth is configured."
       : "Supabase Google auth is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY to .env.local or your deployment environment, then allow this callback URL in Supabase Auth.",

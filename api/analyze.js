@@ -1,9 +1,16 @@
 const { analysisResponse, json } = require("./_structurex-data");
 const { generateRiskInsightsWithGemini } = require("./gemini");
+const { rateLimit, requireTurnstile } = require("./security");
 
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
     return json(res, { detail: "Method not allowed" }, 405);
+  }
+  if (!rateLimit(req, res, "api-analyze", { limit: 8 })) {
+    return;
+  }
+  if (!(await requireTurnstile(req, res, {}, "dataset-analysis"))) {
+    return;
   }
 
   const fallback = analysisResponse();

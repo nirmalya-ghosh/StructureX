@@ -1,4 +1,5 @@
 const { json, readJson } = require("./_structurex-data");
+const { rateLimit } = require("./security");
 
 const DEFAULT_MAP_KEY = "e6jRUxTkKH6UOJQnLqvl";
 const LOOKUP_TIMEOUT_MS = 6500;
@@ -182,6 +183,9 @@ function chooseBest(candidates, fallback) {
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
     return json(res, { detail: "Method not allowed" }, 405);
+  }
+  if (!rateLimit(req, res, "api-reverse-geocode", { limit: 40 })) {
+    return;
   }
 
   const body = await readJson(req);

@@ -16,6 +16,8 @@ const GOOGLE_ICON =
   '<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google">';
 
 let supabaseClientPromise = null;
+let authConfigPromise = null;
+const turnstileWidgets = new Map();
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -121,24 +123,32 @@ function getSupabaseLibrary() {
 }
 
 async function loadAuthConfig() {
-  const response = await fetch(AUTH_CONFIG_ENDPOINT, {
-    headers: { Accept: "application/json" },
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    throw new Error("The Supabase auth config endpoint is not available.");
+  if (authConfigPromise) {
+    return authConfigPromise;
   }
 
-  const config = await response.json();
-  if (!config.configured || !config.supabaseUrl || !config.supabaseAnonKey) {
-    throw new Error(
-      config.message ||
-        "Supabase is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY to .env.local or your Vercel environment."
-    );
-  }
+  authConfigPromise = (async () => {
+    const response = await fetch(AUTH_CONFIG_ENDPOINT, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
 
-  return config;
+    if (!response.ok) {
+      throw new Error("The Supabase auth config endpoint is not available.");
+    }
+
+    const config = await response.json();
+    if (!config.configured || !config.supabaseUrl || !config.supabaseAnonKey) {
+      throw new Error(
+        config.message ||
+          "Supabase is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY to .env.local or your Vercel environment."
+      );
+    }
+
+    return config;
+  })();
+
+  return authConfigPromise;
 }
 
 async function getSupabaseClient() {
@@ -236,6 +246,113 @@ function setGoogleButtonLoading(button) {
   };
 }
 
+async function getTurnstileConfig() {
+  try {
+    const config = await loadAuthConfig();
+    return config.turnstile || { enabled: false };
+  } catch {
+    return { enabled: false };
+  }
+}
+
+function waitForTurnstile() {
+  if (window.turnstile?.render) {
+    return Promise.resolve(window.turnstile);
+  }
+
+  return new Promise((resolve, reject) => {
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      if (window.turnstile?.render) {
+        window.clearInterval(timer);
+        resolve(window.turnstile);
+        return;
+      }
+      if (attempts > 80) {
+        window.clearInterval(timer);
+        reject(new Error("CAPTCHA could not load. Refresh and try again."));
+      }
+    }, 100);
+  });
+}
+
+async function renderTurnstileBox(box, siteKey) {
+  if (!box || turnstileWidgets.has(box)) {
+    return;
+  }
+
+  const turnstile = await waitForTurnstile();
+  box.classList.add("turnstile-visible");
+  const widgetId = turnstile.render(box, {
+    sitekey: siteKey,
+    theme: "dark",
+    action: box.dataset.turnstileAction || "auth",
+    callback: (token) => {
+      box.dataset.turnstileToken = token;
+    },
+    "expired-callback": () => {
+      box.dataset.turnstileToken = "";
+    },
+    "error-callback": () => {
+      box.dataset.turnstileToken = "";
+    },
+  });
+  turnstileWidgets.set(box, widgetId);
+}
+
+async function initTurnstileWidgets() {
+  const config = await getTurnstileConfig();
+  const boxes = Array.from(document.querySelectorAll(".turnstile-box"));
+  if (!boxes.length) {
+    return;
+  }
+
+  if (!config.enabled || !config.siteKey) {
+    boxes.forEach((box) => {
+      box.innerHTML = '<div class="turnstile-disabled">CAPTCHA protection is ready. Add Cloudflare Turnstile keys to enable it.</div>';
+    });
+    return;
+  }
+
+  await Promise.all(boxes.map((box) => renderTurnstileBox(box, config.siteKey)));
+}
+
+async function requireTurnstile(action, container) {
+  const config = await getTurnstileConfig();
+  if (!config.enabled) {
+    return "";
+  }
+
+  const box = container?.querySelector(".turnstile-box") || document.querySelector(`.turnstile-box[data-turnstile-action="${action}"]`);
+  if (!box) {
+    throw new Error("CAPTCHA widget is missing. Refresh and try again.");
+  }
+  await renderTurnstileBox(box, config.siteKey);
+
+  const token = box.dataset.turnstileToken;
+  if (!token) {
+    throw new Error("Complete the CAPTCHA verification first.");
+  }
+
+  const response = await fetch("/api/verify-turnstile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ turnstileToken: token, action }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.verified) {
+    throw new Error(payload.detail || "CAPTCHA verification failed. Please retry.");
+  }
+
+  const widgetId = turnstileWidgets.get(box);
+  if (window.turnstile && widgetId !== undefined) {
+    window.turnstile.reset(widgetId);
+  }
+  box.dataset.turnstileToken = "";
+  return token;
+}
+
 async function startGoogleOAuth(button, requireTerms, termsCheckbox) {
   if (requireTerms && termsCheckbox && !termsCheckbox.checked) {
     window.alert("Please agree to the Terms & Conditions and Privacy Policy before creating an account.");
@@ -245,6 +362,7 @@ async function startGoogleOAuth(button, requireTerms, termsCheckbox) {
   const restoreButton = setGoogleButtonLoading(button);
 
   try {
+    await requireTurnstile(requireTerms ? "google-signup" : "google-login", button.closest("form"));
     const client = await getSupabaseClient();
     localStorage.setItem("sx_auth_intent", requireTerms ? "signup" : "login");
 
@@ -453,6 +571,7 @@ async function initForgotPasswordPage() {
     localResetEmail = email;
 
     try {
+      await requireTurnstile("forgot-password", requestForm);
       const client = await tryGetSupabaseClient();
       if (!client) {
         showUpdateForm();
@@ -549,6 +668,8 @@ async function initForgotPasswordPage() {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+  initTurnstileWidgets().catch((error) => console.warn(error.message));
+
   if (await initForgotPasswordPage()) {
     return;
   }
@@ -595,6 +716,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     setTimeout(async () => {
       try {
+        await requireTurnstile("login", loginForm);
         await saveSecureUser({ email, name: email.split("@")[0] || "User", provider: "local" }, `${email}:${password}`, { provider: "local" });
         showAuthSuccess("login");
         window.location.href = DASHBOARD_PATH;
@@ -619,6 +741,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     setTimeout(async () => {
       try {
+        await requireTurnstile("signup", signupForm);
         await saveSecureUser({ email, name, provider: "local" }, `${email}:${password}`, { provider: "local" });
         showAuthSuccess("signup");
         window.location.href = DASHBOARD_PATH;
