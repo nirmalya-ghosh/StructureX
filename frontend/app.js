@@ -116,7 +116,7 @@ async function ensureTurnstileModal(action) {
                 <div class="turnstile-icon"><i class="fas fa-shield-halved"></i></div>
                 <h3>Security Check</h3>
                 <p>Complete this verification to run protected AI analysis.</p>
-                <div id="dashboard-turnstile"></div>
+                <div id="dashboard-turnstile"><div id="dashboard-turnstile-widget"></div></div>
             </div>
         `;
         document.body.appendChild(modal);
@@ -131,14 +131,17 @@ async function ensureTurnstileModal(action) {
     modal.classList.add("visible");
     const api = await waitForDashboardTurnstile();
     const container = document.getElementById("dashboard-turnstile");
+    const widgetContainer = document.getElementById("dashboard-turnstile-widget");
     if (dashboardTurnstileWidget && dashboardTurnstileAction !== action && typeof api.remove === "function") {
         api.remove(dashboardTurnstileWidget);
         dashboardTurnstileWidget = null;
+        if (widgetContainer) {
+            widgetContainer.innerHTML = "";
+        }
     }
 
     if (!dashboardTurnstileWidget) {
-        container.innerHTML = "";
-        dashboardTurnstileWidget = api.render(container, {
+        dashboardTurnstileWidget = api.render(widgetContainer || container, {
             sitekey: config.siteKey,
             action,
             theme: "dark",

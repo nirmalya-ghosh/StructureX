@@ -195,16 +195,18 @@ async function initTurnstileWidgets() {
   try {
     const api = await waitForTurnstile();
     boxes.forEach((box) => {
-      if (turnstileWidgets.has(box.id)) {
+      const boxId = box.id;
+      if (turnstileWidgets.has(boxId)) {
         return;
       }
-      const widgetId = api.render(box, {
+      box.innerHTML = '<div class="turnstile-widget"></div>';
+      const widgetId = api.render(box.querySelector(".turnstile-widget"), {
         sitekey: config.siteKey,
         action: box.dataset.action || "auth",
         theme: "dark",
         size: "flexible",
       });
-      turnstileWidgets.set(box.id, widgetId);
+      turnstileWidgets.set(boxId, widgetId);
     });
   } catch (error) {
     console.error(error);
@@ -220,8 +222,7 @@ async function requireTurnstile(action, boxId) {
     return "";
   }
 
-  const box = document.getElementById(boxId);
-  const widgetId = box ? turnstileWidgets.get(box.id) : null;
+  const widgetId = turnstileWidgets.get(boxId);
   const token = widgetId && window.turnstile ? window.turnstile.getResponse(widgetId) : "";
   if (!token) {
     throw new Error("Complete the CAPTCHA verification before continuing.");
