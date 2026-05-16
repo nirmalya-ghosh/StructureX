@@ -187,10 +187,18 @@ Return exactly this JSON object shape:
   "risk_score": 0
 }`;
 
-  return normalizeBuildingGemini(
+  const normalized = normalizeBuildingGemini(
     await generateGeminiJson(prompt, { label: "Building AI", temperature: 0.18 }),
     fallback
   );
+  const locationMeta = input?.location_meta || {};
+  if (locationMeta.source || locationMeta.confidence) {
+    const provenance = `Address provenance: ${locationMeta.confidence || "inferred"} confidence from ${locationMeta.source || "map selection"}${locationMeta.checkedAt ? ` at ${locationMeta.checkedAt}` : ""}.`;
+    normalized.confidence_notes = normalized.confidence_notes?.includes("Address provenance:")
+      ? normalized.confidence_notes
+      : `${normalized.confidence_notes || fallback.confidence_notes || ""} ${provenance}`.trim();
+  }
+  return normalized;
 }
 
 function normalizeInsights(raw, fallback) {
