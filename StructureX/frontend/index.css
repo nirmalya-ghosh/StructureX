@@ -134,6 +134,9 @@ body.right-panel-collapsed {
     background: rgba(59, 130, 246, 0.18) !important;
     color: #ffffff !important;
 }
+.mobile-live-location-fab {
+    display: none;
+}
 
 /* Infrastructure Markers */
 .infra-marker {
@@ -2825,6 +2828,46 @@ body[data-risk-level="critical"] #header {
         border-radius: 16px;
     }
 
+    .mobile-live-location-fab {
+        position: fixed;
+        right: 10px;
+        bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 152px);
+        z-index: 78;
+        min-width: 48px;
+        height: 48px;
+        padding: 0 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(147, 197, 253, 0.46);
+        background:
+            radial-gradient(circle at 28% 22%, rgba(255,255,255,0.2), transparent 32%),
+            linear-gradient(135deg, rgba(37,99,235,0.98), rgba(14,165,233,0.88));
+        color: #ffffff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-family: var(--font-body);
+        font-size: 0.66rem;
+        font-weight: 900;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        box-shadow:
+            0 18px 36px rgba(2,6,23,0.48),
+            0 0 0 4px rgba(59,130,246,0.13),
+            0 0 24px rgba(59,130,246,0.3);
+        cursor: pointer;
+        pointer-events: auto;
+        touch-action: manipulation;
+    }
+
+    .mobile-live-location-fab i {
+        font-size: 1rem;
+    }
+
+    .mobile-live-location-fab:active {
+        transform: scale(0.96);
+    }
+
     .maplibregl-ctrl-bottom-right {
         bottom: calc(58px + env(safe-area-inset-bottom, 0px)) !important;
     }
@@ -2862,6 +2905,18 @@ body[data-risk-level="critical"] #header {
     .hdr-nav.mobile-nav .nav-pill i { font-size: 0.88rem; }
 
     #bottom-panel { height: 280px; }
+
+    .mobile-live-location-fab {
+        right: 9px;
+        bottom: calc(52px + env(safe-area-inset-bottom, 0px) + 150px);
+        width: 46px;
+        min-width: 46px;
+        padding: 0;
+    }
+
+    .mobile-live-location-fab span {
+        display: none;
+    }
 
     .location-consent {
         bottom: calc(52px + env(safe-area-inset-bottom, 0px) + 10px);

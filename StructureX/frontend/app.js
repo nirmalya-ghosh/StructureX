@@ -500,6 +500,7 @@ function init() {
     initResizeHandling();
     initAuth();
     initMobileLayout();
+    initMobileLiveLocationFab();
     renderAnalysisHistory();
     renderResiliencePanel();
     renderWeatherPanel();
@@ -5079,6 +5080,26 @@ function closeMobileBackdrop() {
     $("#left-panel")?.classList.remove("mobile-open");
     $("#right-panel")?.classList.remove("mobile-open");
     $("#bottom-panel")?.classList.remove("mobile-open");
+}
+
+function initMobileLiveLocationFab() {
+    if ($("#mobile-live-location-fab")) {
+        return;
+    }
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = "mobile-live-location-fab";
+    button.className = "mobile-live-location-fab";
+    button.setAttribute("aria-label", "Return to my live location");
+    button.innerHTML = '<i class="fas fa-location-crosshairs"></i><span>Live location</span>';
+    button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        closeMobileBackdrop();
+        requestUserLocation({ source: "mobile-live-location-fab" });
+    });
+    document.body.appendChild(button);
 }
 
 /**
