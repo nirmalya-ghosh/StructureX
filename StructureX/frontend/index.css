@@ -2822,6 +2822,16 @@ body[data-risk-level="critical"] #header {
     /* — Bottom panel tabs compact — */
     .btm-tabs { padding: 0 8px; }
     .btm-tab { padding: 7px 10px; font-size: 0.64rem; }
+
+    .location-consent {
+        bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 12px);
+        width: min(500px, calc(100vw - 24px));
+        z-index: 130;
+    }
+
+    .location-card {
+        border-radius: 16px;
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -2850,6 +2860,25 @@ body[data-risk-level="critical"] #header {
     .hdr-nav.mobile-nav .nav-pill i { font-size: 0.88rem; }
 
     #bottom-panel { height: 280px; }
+
+    .location-consent {
+        bottom: calc(52px + env(safe-area-inset-bottom, 0px) + 10px);
+        width: calc(100vw - 20px);
+    }
+
+    .location-card {
+        gap: 10px;
+        padding: 12px;
+    }
+
+    .location-actions {
+        gap: 7px;
+    }
+
+    .location-actions button {
+        min-height: 40px;
+        padding: 8px 10px;
+    }
 }
 
 /* ==========================================================================
